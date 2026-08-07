@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep Cairo-Dock on KDE's primary output
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/window-layouts-kde/cairo-dock-unlock-guard
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=graphical-session.target

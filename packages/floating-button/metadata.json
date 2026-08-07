@@ -1,0 +1,21 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Window Layouts contributors"
+            }
+        ],
+        "Category": "Window Management",
+        "Description": "Shows Window Layouts controls beside the focused window",
+        "EnabledByDefault": false,
+        "Icon": "view-grid",
+        "Id": "windowlayoutsfloatingbutton",
+        "License": "GPL-2.0-or-later",
+        "Name": "Window Layouts Floating Button",
+        "Version": "0.3.1"
+    },
+    "X-Plasma-API": "declarativescript",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml"
+}

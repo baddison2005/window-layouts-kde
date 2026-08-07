@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="160" viewBox="0 0 420 160">
+  <rect width="420" height="160" rx="18" fill="#232629"/>
+  <g transform="translate(22 16)">
+    <rect width="128" height="128" rx="12" fill="#31363b" stroke="#eff0f1" stroke-width="5"/>
+    <path d="M64 3v122M3 64h122" stroke="#7f8c8d" stroke-width="4"/>
+    <rect x="7" y="7" width="52" height="52" rx="4" fill="#3daee9"/>
+    <rect x="69" y="69" width="52" height="52" rx="4" fill="#3daee9"/>
+  </g>
+  <text x="174" y="72" fill="#eff0f1" font-family="sans-serif" font-size="28" font-weight="bold">Window Layouts</text>
+  <text x="174" y="108" fill="#bdc3c7" font-family="sans-serif" font-size="17">KWin layouts from Cairo-Dock</text>
+</svg>

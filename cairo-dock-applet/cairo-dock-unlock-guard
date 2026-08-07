@@ -1,0 +1,338 @@
+#!/usr/bin/python3
+
+# SPDX-FileCopyrightText: 2026 Window Layouts contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Keep Cairo-Dock on KDE's primary output across Wayland surface changes."""
+
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import time
+
+import dbus
+from dbus.mainloop.glib import DBusGMainLoop
+import gi
+
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, GLib  # noqa: E402
+
+
+CAIRO_DOCK_UNIT = r"app-cairo\x2ddock@autostart.service"
+OUTPUT_POLL_SECONDS = 3
+RECOVERY_DELAY_MS = 2500
+UNLOCK_DELAY_MS = 1500
+
+
+def _run(command, timeout, **kwargs):
+    try:
+        return subprocess.run(
+            command,
+            check=False,
+            timeout=timeout,
+            **kwargs,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        print(
+            f"cairo-dock-session-guard: command failed: {error}",
+            flush=True,
+        )
+        return None
+
+
+def output_state():
+    """Return a stable active-output signature and KScreen's primary output."""
+    completed = _run(
+        ["kscreen-doctor", "-j"],
+        timeout=5,
+        capture_output=True,
+        text=True,
+    )
+    if completed is None or completed.returncode != 0:
+        return None
+
+    try:
+        document = json.loads(completed.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
+        print(
+            f"cairo-dock-session-guard: invalid KScreen output: {error}",
+            flush=True,
+        )
+        return None
+
+    outputs = [
+        output
+        for output in document.get("outputs", [])
+        if output.get("connected") and output.get("enabled")
+    ]
+    if not outputs:
+        return None
+
+    def normalized(output):
+        position = output.get("pos", {})
+        size = output.get("size", {})
+        return (
+            str(output.get("name", "")),
+            int(output.get("priority", 0)),
+            int(position.get("x", 0)),
+            int(position.get("y", 0)),
+            int(size.get("width", 0)),
+            int(size.get("height", 0)),
+            float(output.get("scale", 1) or 1),
+            str(output.get("currentModeId", "")),
+            int(output.get("rotation", 1)),
+        )
+
+    signature = tuple(sorted(normalized(output) for output in outputs))
+    primary = min(
+        outputs,
+        key=lambda output: (
+            int(output.get("priority", 0)) <= 0,
+            int(output.get("priority", 0)),
+            str(output.get("name", "")),
+        ),
+    )
+    return signature, primary
+
+
+def primary_monitor_index(primary_output):
+    """Map KScreen's primary output geometry to Cairo-Dock's GDK monitor index."""
+    display = Gdk.Display.get_default()
+    if display is None or display.get_n_monitors() < 1:
+        return None
+
+    position = primary_output.get("pos", {})
+    size = primary_output.get("size", {})
+    scale = float(primary_output.get("scale", 1) or 1)
+    target_x = int(position.get("x", 0))
+    target_y = int(position.get("y", 0))
+    target_width = round(int(size.get("width", 0)) / scale)
+    target_height = round(int(size.get("height", 0)) / scale)
+
+    best_index = 0
+    best_score = None
+    for index in range(display.get_n_monitors()):
+        geometry = display.get_monitor(index).get_geometry()
+        score = (
+            abs(geometry.x - target_x) * 10000
+            + abs(geometry.y - target_y) * 10000
+            + abs(geometry.width - target_width)
+            + abs(geometry.height - target_height)
+        )
+        if best_score is None or score < best_score:
+            best_index = index
+            best_score = score
+
+    return best_index
+
+
+def _cairo_dock_config_path():
+    config_home = Path(
+        os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+    )
+    return config_home / "cairo-dock" / "current_theme" / "cairo-dock.conf"
+
+
+def save_primary_monitor(primary_output):
+    """Persist the primary GDK monitor index without rewriting Cairo-Dock's file."""
+    monitor_index = primary_monitor_index(primary_output)
+    if monitor_index is None:
+        print(
+            "cairo-dock-session-guard: GDK monitor list is not ready",
+            flush=True,
+        )
+        return None
+
+    config_path = _cairo_dock_config_path()
+    try:
+        original = config_path.read_text(encoding="utf-8")
+    except OSError as error:
+        print(
+            f"cairo-dock-session-guard: cannot read {config_path}: {error}",
+            flush=True,
+        )
+        return None
+
+    section = None
+    changed = False
+    updated_lines = []
+    monitor_setting = re.compile(r"^(\s*num_screen\s*=\s*)[^#\r\n]*(.*)$")
+    for line in original.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1]
+
+        match = monitor_setting.match(line)
+        if section == "Position" and match:
+            ending = "\n" if line.endswith("\n") else ""
+            suffix = match.group(2).rstrip("\r\n")
+            replacement = f"{match.group(1)}{monitor_index}{suffix}{ending}"
+            updated_lines.append(replacement)
+            changed = changed or replacement != line
+        else:
+            updated_lines.append(line)
+
+    if not changed:
+        return monitor_index
+
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=config_path.parent,
+            prefix=f".{config_path.name}.",
+            delete=False,
+        ) as temporary:
+            temporary.write("".join(updated_lines))
+            temporary_path = Path(temporary.name)
+        temporary_path.chmod(config_path.stat().st_mode)
+        os.replace(temporary_path, config_path)
+    except OSError as error:
+        print(
+            f"cairo-dock-session-guard: cannot update {config_path}: {error}",
+            flush=True,
+        )
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except (OSError, UnboundLocalError):
+            pass
+        return None
+
+    print(
+        "cairo-dock-session-guard: set Cairo-Dock monitor index to "
+        f"{monitor_index} ({primary_output.get('name', 'primary output')})",
+        flush=True,
+    )
+    return monitor_index
+
+
+def reveal_cairo_dock():
+    command = [
+        "gdbus",
+        "call",
+        "--session",
+        "--dest",
+        "org.cairodock.CairoDock",
+        "--object-path",
+        "/org/cairodock/CairoDock",
+        "--method",
+        "org.cairodock.CairoDock.ShowDock",
+        "1",
+    ]
+    for _attempt in range(12):
+        completed = _run(
+            command,
+            timeout=3,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if completed is not None and completed.returncode == 0:
+            return True
+        time.sleep(0.25)
+    print(
+        "cairo-dock-session-guard: dock did not expose its D-Bus control",
+        flush=True,
+    )
+    return False
+
+
+def restart_cairo_dock(reason="manual recovery"):
+    state = output_state()
+    if state is not None:
+        _signature, primary = state
+        save_primary_monitor(primary)
+
+    print(
+        f"cairo-dock-session-guard: restarting Cairo-Dock after {reason}",
+        flush=True,
+    )
+    completed = _run(
+        ["systemctl", "--user", "restart", CAIRO_DOCK_UNIT],
+        timeout=20,
+    )
+    if completed is None or completed.returncode != 0:
+        return False
+    reveal_cairo_dock()
+    return True
+
+
+class SessionGuard:
+    def __init__(self):
+        self.pending_restart = None
+        self.pending_reasons = set()
+        self.screen_locked = False
+        state = output_state()
+        self.output_signature = state[0] if state is not None else None
+
+        bus = dbus.SessionBus()
+        bus.add_signal_receiver(
+            self._active_changed,
+            signal_name="ActiveChanged",
+            dbus_interface="org.freedesktop.ScreenSaver",
+            bus_name="org.freedesktop.ScreenSaver",
+            path="/ScreenSaver",
+        )
+        GLib.timeout_add_seconds(OUTPUT_POLL_SECONDS, self._check_outputs)
+
+    def _cancel_restart(self):
+        if self.pending_restart is not None:
+            GLib.source_remove(self.pending_restart)
+            self.pending_restart = None
+
+    def _schedule_restart(self, reason, delay_ms):
+        self.pending_reasons.add(reason)
+        if self.screen_locked:
+            return
+        self._cancel_restart()
+        self.pending_restart = GLib.timeout_add(delay_ms, self._restart)
+
+    def _active_changed(self, active):
+        self.screen_locked = bool(active)
+        if self.screen_locked:
+            self._cancel_restart()
+            return
+        # Give KWin a moment to restore outputs and layer-shell support.
+        self._schedule_restart("screen unlock", UNLOCK_DELAY_MS)
+
+    def _check_outputs(self):
+        state = output_state()
+        if state is None:
+            return GLib.SOURCE_CONTINUE
+
+        signature, _primary = state
+        if self.output_signature is None:
+            self.output_signature = signature
+        elif signature != self.output_signature:
+            self.output_signature = signature
+            print(
+                "cairo-dock-session-guard: active output topology changed",
+                flush=True,
+            )
+            self._schedule_restart("output topology change", RECOVERY_DELAY_MS)
+        return GLib.SOURCE_CONTINUE
+
+    def _restart(self):
+        self.pending_restart = None
+        reasons = " and ".join(sorted(self.pending_reasons))
+        self.pending_reasons.clear()
+        restart_cairo_dock(reasons or "session recovery")
+        return GLib.SOURCE_REMOVE
+
+
+def main():
+    if "--restore-now" in sys.argv[1:]:
+        return 0 if restart_cairo_dock() else 1
+
+    DBusGMainLoop(set_as_default=True)
+    SessionGuard()
+    GLib.MainLoop().run()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

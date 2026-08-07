@@ -1,0 +1,523 @@
+#!/usr/bin/python3
+
+# SPDX-FileCopyrightText: 2026 Window Layouts contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""D-Bus activated host for the shared Window Layouts configurator."""
+
+import json
+import math
+from pathlib import Path
+import subprocess
+
+import dbus
+import dbus.service
+from dbus.mainloop.glib import DBusGMainLoop
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk
+
+from configurator import WindowLayoutsConfigurator
+
+
+SERVICE_NAME = "org.example.WindowLayouts.Configurator"
+OBJECT_PATH = "/org/example/WindowLayouts/Configurator"
+INTERFACE_NAME = SERVICE_NAME
+MAX_LAYOUTS = 20
+FLOATING_BUTTON_KEY = "windowlayoutsfloatingbuttonEnabled"
+DRAG_TARGETS_KEY = "windowlayoutsdragtargetsEnabled"
+FLOATING_BUTTON_GROUP = "Script-windowlayoutsfloatingbutton"
+DRAG_TARGETS_GROUP = "Script-windowlayoutsdragtargets"
+FLOATING_BUTTON_SIZE_KEY = "ButtonSize"
+SHOW_ALL_TARGETS_KEY = "ShowAllTargets"
+GROUP_ORDER_KEY = "GroupOrder"
+FLOATING_BUTTON_SIZES = ("small", "default", "big", "extraBig")
+DEFAULT_GROUP_ORDER = (
+    "halves",
+    "quarters",
+    "thirds",
+    "twoThirds",
+    "custom",
+    "window",
+)
+
+
+class LayoutStorage:
+    """Read, validate, and synchronize custom layouts across frontends."""
+
+    @staticmethod
+    def _command_output(arguments, timeout=10):
+        completed = subprocess.run(
+            arguments,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return completed.stdout.strip()
+
+    @staticmethod
+    def _validated_layout(candidate, index):
+        if not isinstance(candidate, dict):
+            return None
+
+        name = candidate.get("name")
+        geometry = [
+            candidate.get("x"),
+            candidate.get("y"),
+            candidate.get("width"),
+            candidate.get("height"),
+        ]
+        if not isinstance(name, str) or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in geometry
+        ):
+            return None
+
+        x, y, width, height = geometry
+        if (x < 0 or y < 0 or width <= 0 or height <= 0
+                or x + width > 1.000001 or y + height > 1.000001):
+            return None
+
+        return {
+            "name": name.strip() or f"Custom Layout {index + 1}",
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
+        }
+
+    def load(self):
+        try:
+            encoded = self._command_output([
+                "kreadconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                "Script-windowlayouts",
+                "--key",
+                "CustomLayouts",
+                "--default",
+                "[]",
+            ])
+            candidates = json.loads(encoded or "[]")
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            return []
+
+        if not isinstance(candidates, list):
+            return []
+
+        layouts = []
+        for index, candidate in enumerate(candidates[:MAX_LAYOUTS]):
+            layout = self._validated_layout(candidate, index)
+            if layout is not None:
+                layouts.append(layout)
+        return layouts
+
+    def save(self, layouts):
+        encoded = json.dumps(layouts, separators=(",", ":"))
+        for group in (
+            "Script-windowlayouts",
+            "Script-windowlayoutsfloatingbutton",
+            "Script-windowlayoutsdragtargets",
+        ):
+            self._command_output([
+                "kwriteconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                group,
+                "--key",
+                "CustomLayouts",
+                encoded,
+            ])
+
+        # Synchronize the panel widget when one is installed. Plasma's script
+        # receives a JSON string literal, so names remain correctly escaped.
+        plasma_value = json.dumps(encoded)
+        script = f"""var updated = false;
+for (var panelIndex = 0; panelIndex < panelIds.length && !updated; panelIndex++) {{
+    var panel = panelById(panelIds[panelIndex]);
+    for (var widgetIndex = 0; widgetIndex < panel.widgetIds.length; widgetIndex++) {{
+        var widget = panel.widgetById(panel.widgetIds[widgetIndex]);
+        if (widget && widget.type === "org.example.windowlayouts") {{
+            widget.currentConfigGroup = ["General"];
+            widget.writeConfig("customLayouts", {plasma_value});
+            updated = true;
+            break;
+        }}
+    }}
+}}
+print(updated ? "updated" : "missing");"""
+        try:
+            self._command_output([
+                "qdbus-qt6",
+                "org.kde.plasmashell",
+                "/PlasmaShell",
+                "org.kde.PlasmaShell.evaluateScript",
+                script,
+            ])
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+        self._reconfigure_kwin()
+
+    @classmethod
+    def _read_plugin_enabled(cls, key):
+        try:
+            value = cls._command_output([
+                "kreadconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                "Plugins",
+                "--key",
+                key,
+                "--default",
+                "false",
+            ])
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return value.strip().lower() in ("1", "true", "yes", "on")
+
+    def load_feature_settings(self):
+        floating_button_size = self._read_script_setting(
+            FLOATING_BUTTON_GROUP,
+            FLOATING_BUTTON_SIZE_KEY,
+            "default",
+        )
+        if floating_button_size not in FLOATING_BUTTON_SIZES:
+            floating_button_size = "default"
+        group_order = self._validated_group_order(self._read_script_setting(
+            "Script-windowlayouts",
+            GROUP_ORDER_KEY,
+            json.dumps(DEFAULT_GROUP_ORDER, separators=(",", ":")),
+        ))
+        return {
+            "floating_button_enabled": self._read_plugin_enabled(FLOATING_BUTTON_KEY),
+            "drag_targets_enabled": self._read_plugin_enabled(DRAG_TARGETS_KEY),
+            "show_all_drag_targets": self._read_script_setting(
+                DRAG_TARGETS_GROUP,
+                SHOW_ALL_TARGETS_KEY,
+                "false",
+            ).strip().lower() in ("1", "true", "yes", "on"),
+            "floating_button_size": floating_button_size,
+            "group_order": group_order,
+        }
+
+    @staticmethod
+    def _validated_group_order(candidate):
+        # Group IDs are stored instead of translated labels. Keep unknown,
+        # duplicate, and missing IDs from making an old user configuration
+        # unusable when a later release introduces another group.
+        if isinstance(candidate, str):
+            try:
+                candidate = json.loads(candidate)
+            except json.JSONDecodeError:
+                candidate = []
+        if not isinstance(candidate, (list, tuple)):
+            candidate = []
+
+        order = []
+        for group_id in candidate:
+            if group_id in DEFAULT_GROUP_ORDER and group_id not in order:
+                order.append(group_id)
+        order.extend(group_id for group_id in DEFAULT_GROUP_ORDER if group_id not in order)
+        return order
+
+    @classmethod
+    def _read_script_setting(cls, group, key, default):
+        try:
+            return cls._command_output([
+                "kreadconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                group,
+                "--key",
+                key,
+                "--default",
+                default,
+            ])
+        except (OSError, subprocess.SubprocessError):
+            return default
+
+    def save_feature_settings(self, settings):
+        floating_enabled = bool(settings.get("floating_button_enabled", False))
+        drag_targets_enabled = bool(settings.get("drag_targets_enabled", False))
+        show_all_drag_targets = bool(settings.get("show_all_drag_targets", False))
+        floating_button_size = str(settings.get("floating_button_size", "default"))
+        if floating_button_size not in FLOATING_BUTTON_SIZES:
+            floating_button_size = "default"
+        group_order = self._validated_group_order(settings.get("group_order", []))
+        group_order_json = json.dumps(group_order, separators=(",", ":"))
+        for key, enabled in (
+            (FLOATING_BUTTON_KEY, floating_enabled),
+            (DRAG_TARGETS_KEY, drag_targets_enabled),
+        ):
+            self._command_output([
+                "kwriteconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                "Plugins",
+                "--key",
+                key,
+                "--type",
+                "bool",
+                "true" if enabled else "false",
+            ])
+
+        self._command_output([
+            "kwriteconfig6",
+            "--file",
+            "kwinrc",
+            "--group",
+            DRAG_TARGETS_GROUP,
+            "--key",
+            SHOW_ALL_TARGETS_KEY,
+            "--type",
+            "bool",
+            "true" if show_all_drag_targets else "false",
+        ])
+        self._command_output([
+            "kwriteconfig6",
+            "--file",
+            "kwinrc",
+            "--group",
+            FLOATING_BUTTON_GROUP,
+            "--key",
+            FLOATING_BUTTON_SIZE_KEY,
+            floating_button_size,
+        ])
+        for group in (
+            "Script-windowlayouts",
+            FLOATING_BUTTON_GROUP,
+            DRAG_TARGETS_GROUP,
+        ):
+            self._command_output([
+                "kwriteconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                group,
+                "--key",
+                GROUP_ORDER_KEY,
+                group_order_json,
+            ])
+
+        # The panel owns a second copy for normal KCM cfg_* bindings. Write it
+        # in the same transaction so opening a different frontend never shows
+        # stale feature controls.
+        floating_js = "true" if floating_enabled else "false"
+        drag_targets_js = "true" if drag_targets_enabled else "false"
+        show_all_js = "true" if show_all_drag_targets else "false"
+        floating_size_js = json.dumps(floating_button_size)
+        group_order_js = json.dumps(group_order_json)
+        script = f"""var updated = false;
+for (var panelIndex = 0; panelIndex < panelIds.length && !updated; panelIndex++) {{
+    var panel = panelById(panelIds[panelIndex]);
+    for (var widgetIndex = 0; widgetIndex < panel.widgetIds.length; widgetIndex++) {{
+        var widget = panel.widgetById(panel.widgetIds[widgetIndex]);
+        if (widget && widget.type === "org.example.windowlayouts") {{
+            widget.currentConfigGroup = ["General"];
+            widget.writeConfig("floatingButtonEnabled", {floating_js});
+            widget.writeConfig("dragTargetsEnabled", {drag_targets_js});
+            widget.writeConfig("showAllDragTargets", {show_all_js});
+            widget.writeConfig("floatingButtonSize", {floating_size_js});
+            widget.writeConfig("groupOrder", {group_order_js});
+            updated = true;
+            break;
+        }}
+    }}
+}}
+print(updated ? "updated" : "missing");"""
+        try:
+            self._command_output([
+                "qdbus-qt6",
+                "org.kde.plasmashell",
+                "/PlasmaShell",
+                "org.kde.PlasmaShell.evaluateScript",
+                script,
+            ])
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+        self._reconfigure_kwin()
+        self._set_script_enabled("windowlayoutsfloatingbutton", floating_enabled)
+        self._set_script_enabled("windowlayoutsdragtargets", drag_targets_enabled)
+
+    @classmethod
+    def _script_main_path(cls, plugin_id):
+        try:
+            data_directory = Path(cls._command_output([
+                "qtpaths6",
+                "--writable-path",
+                "GenericDataLocation",
+            ]))
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+        runtime_root = data_directory / "window-layouts-kde" / "runtime"
+        candidates = sorted(
+            runtime_root.glob(f"{plugin_id}-*/contents/ui/main.qml"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )
+        candidates.append(
+            data_directory / "kwin" / "scripts" / plugin_id / "contents" / "ui" / "main.qml"
+        )
+        return next((path for path in candidates if path.is_file()), None)
+
+    @classmethod
+    def _set_script_enabled(cls, plugin_id, enabled):
+        if not enabled:
+            try:
+                cls._command_output([
+                    "qdbus-qt6",
+                    "org.kde.KWin",
+                    "/Scripting",
+                    "org.kde.kwin.Scripting.unloadScript",
+                    plugin_id,
+                ])
+            except (OSError, subprocess.SubprocessError):
+                pass
+            return
+
+        try:
+            loaded = cls._command_output([
+                "qdbus-qt6",
+                "org.kde.KWin",
+                "/Scripting",
+                "org.kde.kwin.Scripting.isScriptLoaded",
+                plugin_id,
+            ]).lower() == "true"
+        except (OSError, subprocess.SubprocessError):
+            loaded = False
+        if loaded:
+            return
+
+        main_path = cls._script_main_path(plugin_id)
+        if main_path is None:
+            return
+        try:
+            script_number = int(cls._command_output([
+                "qdbus-qt6",
+                "org.kde.KWin",
+                "/Scripting",
+                "org.kde.kwin.Scripting.loadDeclarativeScript",
+                str(main_path),
+                plugin_id,
+            ]))
+            if script_number >= 0:
+                cls._command_output([
+                    "qdbus-qt6",
+                    "org.kde.KWin",
+                    "/Scripting",
+                    "org.kde.kwin.Scripting.start",
+                ])
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+
+    @classmethod
+    def _reconfigure_kwin(cls):
+        try:
+            cls._command_output([
+                "qdbus-qt6",
+                "org.kde.KWin",
+                "/KWin",
+                "org.kde.KWin.reconfigure",
+            ])
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+class ConfiguratorService(dbus.service.Object):
+    """Own one editor window and present it for every D-Bus request."""
+
+    def __init__(self, bus_name):
+        super().__init__(bus_name, OBJECT_PATH)
+        self.storage = LayoutStorage()
+        self.window = WindowLayoutsConfigurator(
+            self.storage.load,
+            self.storage.save,
+            self.storage.load_feature_settings,
+            self.storage.save_feature_settings,
+        )
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="")
+    def Show(self):
+        GLib.idle_add(self._show_window)
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="")
+    def Quit(self):
+        GLib.idle_add(Gtk.main_quit)
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="b", out_signature="")
+    def SetFloatingButtonEnabled(self, enabled):
+        GLib.idle_add(self._set_floating_button_enabled, bool(enabled))
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="bbbss", out_signature="")
+    def SetFeatureSettings(
+        self,
+        floating_enabled,
+        drag_targets_enabled,
+        show_all_drag_targets,
+        floating_button_size,
+        group_order,
+    ):
+        GLib.idle_add(
+            self._set_feature_settings,
+            bool(floating_enabled),
+            bool(drag_targets_enabled),
+            bool(show_all_drag_targets),
+            str(floating_button_size),
+            str(group_order),
+        )
+
+    def _show_window(self):
+        self.window.show_configurator()
+        return GLib.SOURCE_REMOVE
+
+    def _set_floating_button_enabled(self, enabled):
+        settings = self.storage.load_feature_settings()
+        settings["floating_button_enabled"] = enabled
+        self.storage.save_feature_settings(settings)
+        return GLib.SOURCE_REMOVE
+
+    def _set_feature_settings(
+        self,
+        floating_enabled,
+        drag_targets_enabled,
+        show_all_drag_targets,
+        floating_button_size,
+        group_order,
+    ):
+        self.storage.save_feature_settings({
+            "floating_button_enabled": floating_enabled,
+            "drag_targets_enabled": drag_targets_enabled,
+            "show_all_drag_targets": show_all_drag_targets,
+            "floating_button_size": floating_button_size,
+            "group_order": group_order,
+        })
+        return GLib.SOURCE_REMOVE
+
+
+def main():
+    DBusGMainLoop(set_as_default=True)
+    session_bus = dbus.SessionBus()
+    bus_name = dbus.service.BusName(
+        SERVICE_NAME,
+        bus=session_bus,
+        do_not_queue=True,
+    )
+    service = ConfiguratorService(bus_name)
+    Gtk.main()
+    del service
+
+
+if __name__ == "__main__":
+    main()

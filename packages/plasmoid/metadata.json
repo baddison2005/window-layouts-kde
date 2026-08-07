@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Window Layouts contributors"
+            }
+        ],
+        "Category": "Windows and Tasks",
+        "Description": "Choose fixed or custom layouts for the active window",
+        "EnabledByDefault": false,
+        "Icon": "view-grid",
+        "Id": "org.example.windowlayouts",
+        "License": "GPL-2.0-or-later",
+        "Name": "Window Layouts",
+        "Version": "0.5.1"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

@@ -1,0 +1,20 @@
+# Local development and runtime artifacts
+.Rhistory
+__pycache__/
+*.py[cod]
+*.qmlc
+*~
+
+# Empty experimental runtime directories created during floating-button work
+packages/floating-button/contents/ui/current/
+packages/floating-button/contents/ui/live/
+packages/floating-button/contents/ui/live2/
+packages/floating-button/contents/ui/live3/
+packages/floating-button/contents/ui/live4/
+
+# Keep only privacy-reviewed README images in the public repository.
+screenshots/*.png
+
+# Raw 4K recordings are better published as a GitHub Release asset or hosted
+# demo, rather than making every source clone substantially larger.
+videos/

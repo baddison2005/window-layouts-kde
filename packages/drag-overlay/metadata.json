@@ -1,0 +1,21 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Window Layouts contributors"
+            }
+        ],
+        "Category": "Window Management",
+        "Description": "Shows input-transparent layout drop targets while moving a window",
+        "EnabledByDefault": false,
+        "Icon": "view-grid",
+        "Id": "windowlayoutsdragtargets",
+        "License": "GPL-2.0-or-later",
+        "Name": "Window Layouts Drag Targets",
+        "Version": "0.1.4"
+    },
+    "X-Plasma-API": "declarativescript",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml"
+}

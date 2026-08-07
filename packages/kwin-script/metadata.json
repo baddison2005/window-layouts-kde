@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Window Layouts contributors"
+            }
+        ],
+        "Category": "Window Management",
+        "Description": "Moves the active window into fixed or custom layouts",
+        "EnabledByDefault": false,
+        "Icon": "view-grid",
+        "Id": "windowlayouts",
+        "License": "GPL-2.0-or-later",
+        "Name": "Window Layouts",
+        "Version": "0.4.1"
+    },
+    "X-Plasma-API": "javascript"
+}

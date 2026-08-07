@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0 http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+    <kcfgfile name=""/>
+
+    <group name="General">
+        <entry name="customLayouts" type="String">
+            <default>[]</default>
+        </entry>
+        <entry name="floatingButtonEnabled" type="Bool">
+            <default>false</default>
+        </entry>
+        <entry name="dragTargetsEnabled" type="Bool">
+            <default>false</default>
+        </entry>
+        <entry name="showAllDragTargets" type="Bool">
+            <default>false</default>
+        </entry>
+        <entry name="floatingButtonSize" type="String">
+            <default>default</default>
+        </entry>
+        <entry name="groupOrder" type="String">
+            <default>["halves","quarters","thirds","twoThirds","custom","window"]</default>
+        </entry>
+    </group>
+</kcfg>
