@@ -19,6 +19,7 @@ QtObject {
     readonly property int targetGap: 12
     readonly property int screenMargin: 12
     readonly property int revealedGroupPadding: 18
+    readonly property int maximumLayoutPadding: 200
 
     property var signalWindow: null
     property var dragWindow: null
@@ -27,22 +28,55 @@ QtObject {
     property var targets: []
     property string revealedGroupKey: ""
     property int hoveredIndex: -1
+    property int idleFullScanCounter: 0
     property rect hoveredPreview: Qt.rect(0, 0, 0, 0)
     property bool dragActive: false
     property bool overlayMapped: false
+    property string targetPlacement: "zones"
     property bool showAllTargets: false
+    property bool showAllTopTargets: false
+    property bool topTargetsRevealed: false
+    property int layoutPadding: 0
+    property rect topStripRect: Qt.rect(0, 0, 0, 0)
     property int mappingRevision: 0
 
     function loadFeatureSettings() {
+        const configuredPlacement = String(KWin.readConfig("TargetPlacement", "zones"));
+        targetPlacement = configuredPlacement === "top" ? "top" : "zones";
+
         const configured = String(KWin.readConfig("ShowAllTargets", "false")).toLowerCase();
         showAllTargets = configured === "true"
             || configured === "1"
             || configured === "yes"
             || configured === "on";
+
+        const configuredTop = String(KWin.readConfig("ShowAllTopTargets", "false")).toLowerCase();
+        showAllTopTargets = configuredTop === "true"
+            || configuredTop === "1"
+            || configuredTop === "yes"
+            || configuredTop === "on";
+
+        const configuredPadding = Number(KWin.readConfig("LayoutPadding", 0));
+        layoutPadding = Number.isFinite(configuredPadding)
+            ? clamp(Math.round(configuredPadding), 0, maximumLayoutPadding)
+            : 0;
     }
 
     function clamp(value, minimum, maximum) {
         return Math.max(minimum, Math.min(value, maximum));
+    }
+
+    function constrainedInsets(size, startInset, endInset) {
+        const maximumTotal = Math.max(0, size - 1);
+        const requestedTotal = startInset + endInset;
+        if (requestedTotal <= maximumTotal) {
+            return { start: startInset, end: endInset };
+        }
+        if (requestedTotal <= 0) {
+            return { start: 0, end: 0 };
+        }
+        const start = Math.floor(maximumTotal * startInset / requestedTotal);
+        return { start, end: maximumTotal - start };
     }
 
     function isMaximizedWindow(window) {
@@ -107,6 +141,7 @@ QtObject {
         }
 
         const validated = [];
+        const usedSlots = [];
         const candidates = parsed.slice(0, maximumCustomLayouts);
         for (let index = 0; index < candidates.length; index += 1) {
             const candidate = candidates[index];
@@ -134,19 +169,54 @@ QtObject {
             const configuredName = typeof candidate.name === "string"
                 ? candidate.name.trim()
                 : "";
+            let shortcutSlot = Number.isInteger(candidate.shortcutSlot)
+                && candidate.shortcutSlot >= 1
+                && candidate.shortcutSlot <= maximumCustomLayouts
+                && usedSlots.indexOf(candidate.shortcutSlot) < 0
+                    ? candidate.shortcutSlot
+                    : -1;
+            if (shortcutSlot < 0) {
+                for (let slot = 1; slot <= maximumCustomLayouts; slot += 1) {
+                    if (usedSlots.indexOf(slot) < 0) {
+                        shortcutSlot = slot;
+                        break;
+                    }
+                }
+            }
+            usedSlots.push(shortcutSlot);
             validated.push({
                 groupId: "custom",
-                actionId: `WindowLayoutsCustom${index + 1}`,
+                actionId: `WindowLayoutsCustom${shortcutSlot}`,
                 name: configuredName || `Custom Layout ${index + 1}`,
                 x,
                 y,
                 width,
                 height,
                 kind: "layout",
+                customGroupId: typeof candidate.groupId === "string" ? candidate.groupId : "",
             });
         }
 
-        return validated;
+        let groups = [];
+        try {
+            const parsedGroups = JSON.parse(String(KWin.readConfig("CustomGroups", "[]")));
+            if (Array.isArray(parsedGroups)) {
+                groups = parsedGroups
+                    .filter(group => group && typeof group.id === "string")
+                    .map(group => group.id);
+            }
+        } catch (error) {
+            groups = [];
+        }
+        const ordered = validated.filter(layout => groups.indexOf(layout.customGroupId) < 0);
+        groups.forEach(groupId => {
+            validated.forEach(layout => {
+                if (layout.customGroupId === groupId) {
+                    ordered.push(layout);
+                }
+            });
+        });
+        return ordered;
     }
 
     function allLayouts() {
@@ -204,10 +274,76 @@ QtObject {
         if (availableArea.width <= 0 || availableArea.height <= 0) {
             targets = [];
             revealedGroupKey = "";
+            topStripRect = Qt.rect(0, 0, 0, 0);
             return;
         }
 
         const layouts = allLayouts();
+        if (targetPlacement === "top") {
+            const availableColumns = Math.max(1, Math.floor(
+                (availableArea.width - screenMargin * 2 + targetGap)
+                    / (targetWidth + targetGap),
+            ));
+            // Ten columns keeps the strip centered and reachable on wide
+            // displays while allowing additional rows for custom layouts.
+            const columnCount = Math.max(1, Math.min(
+                layouts.length,
+                Math.min(10, availableColumns),
+            ));
+            const positioned = [];
+            let minimumX = Number.POSITIVE_INFINITY;
+            let minimumY = Number.POSITIVE_INFINITY;
+            let maximumX = Number.NEGATIVE_INFINITY;
+            let maximumY = Number.NEGATIVE_INFINITY;
+
+            for (let index = 0; index < layouts.length; index += 1) {
+                const row = Math.floor(index / columnCount);
+                const firstInRow = row * columnCount;
+                const columnsInRow = Math.min(columnCount, layouts.length - firstInRow);
+                const rowWidth = columnsInRow * targetWidth
+                    + Math.max(0, columnsInRow - 1) * targetGap;
+                const rowLeft = Math.round((availableArea.width - rowWidth) / 2);
+                const column = index - firstInRow;
+                const targetX = rowLeft + column * (targetWidth + targetGap);
+                const targetY = screenMargin + row * (targetHeight + targetGap);
+                const layout = layouts[index];
+                positioned.push({
+                    actionId: layout.actionId,
+                    name: layout.name,
+                    x: layout.x,
+                    y: layout.y,
+                    width: layout.width,
+                    height: layout.height,
+                    kind: layout.kind,
+                    groupKey: "top",
+                    centerX: layout.x + layout.width / 2,
+                    centerY: layout.y + layout.height / 2,
+                    targetX,
+                    targetY,
+                });
+                minimumX = Math.min(minimumX, targetX);
+                minimumY = Math.min(minimumY, targetY);
+                maximumX = Math.max(maximumX, targetX + targetWidth);
+                maximumY = Math.max(maximumY, targetY + targetHeight);
+            }
+
+            targets = positioned;
+            topStripRect = positioned.length > 0
+                ? Qt.rect(
+                    minimumX - 10,
+                    minimumY - 10,
+                    maximumX - minimumX + 20,
+                    maximumY - minimumY + 20,
+                )
+                : Qt.rect(0, 0, 0, 0);
+            revealedGroupKey = "";
+            topTargetsRevealed = false;
+            hoveredIndex = -1;
+            hoveredPreview = Qt.rect(0, 0, 0, 0);
+            return;
+        }
+
+        topStripRect = Qt.rect(0, 0, 0, 0);
         const groups = {};
         for (let index = 0; index < layouts.length; index += 1) {
             const layout = layouts[index];
@@ -276,6 +412,7 @@ QtObject {
 
         targets = positioned;
         revealedGroupKey = "";
+        topTargetsRevealed = false;
         hoveredIndex = -1;
         hoveredPreview = Qt.rect(0, 0, 0, 0);
     }
@@ -311,6 +448,31 @@ QtObject {
             && localX <= right + revealedGroupPadding
             && localY >= top - revealedGroupPadding
             && localY <= bottom + revealedGroupPadding;
+    }
+
+    function cursorInsideTopStrip(localX, localY) {
+        return topStripRect.width > 0
+            && localX >= topStripRect.x
+            && localX <= topStripRect.x + topStripRect.width
+            && localY >= topStripRect.y
+            && localY <= topStripRect.y + topStripRect.height;
+    }
+
+    function cursorNearTopCenter(localX, localY) {
+        const triggerWidth = clamp(availableArea.width * 0.45, 420, 1000);
+        const triggerHeight = clamp(availableArea.height * 0.10, 90, 160);
+        const triggerLeft = (availableArea.width - triggerWidth) / 2;
+        return localX >= triggerLeft
+            && localX <= triggerLeft + triggerWidth
+            && localY >= 0
+            && localY <= triggerHeight;
+    }
+
+    function targetIsVisible(target) {
+        if (targetPlacement === "top") {
+            return showAllTopTargets || topTargetsRevealed;
+        }
+        return showAllTargets || target.groupKey === revealedGroupKey;
     }
 
     function nearestGroupForCursor(localX, localY) {
@@ -402,10 +564,25 @@ QtObject {
             );
         }
 
-        const left = Math.round(availableArea.width * layout.x);
-        const top = Math.round(availableArea.height * layout.y);
-        const right = Math.round(availableArea.width * (layout.x + layout.width));
-        const bottom = Math.round(availableArea.height * (layout.y + layout.height));
+        let left = Math.round(availableArea.width * layout.x);
+        let top = Math.round(availableArea.height * layout.y);
+        let right = Math.round(availableArea.width * (layout.x + layout.width));
+        let bottom = Math.round(availableArea.height * (layout.y + layout.height));
+        const edgeEpsilon = 0.000001;
+        const horizontalInsets = constrainedInsets(
+            right - left,
+            layout.x > edgeEpsilon ? layoutPadding : 0,
+            layout.x + layout.width < 1 - edgeEpsilon ? layoutPadding : 0,
+        );
+        const verticalInsets = constrainedInsets(
+            bottom - top,
+            layout.y > edgeEpsilon ? layoutPadding : 0,
+            layout.y + layout.height < 1 - edgeEpsilon ? layoutPadding : 0,
+        );
+        left += horizontalInsets.start;
+        right -= horizontalInsets.end;
+        top += verticalInsets.start;
+        bottom -= verticalInsets.end;
         return Qt.rect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
     }
 
@@ -420,7 +597,15 @@ QtObject {
         const cursor = Workspace.cursorPos;
         const localX = cursor.x - availableArea.x;
         const localY = cursor.y - availableArea.y;
-        const nextGroup = showAllTargets
+        if (targetPlacement === "top") {
+            topTargetsRevealed = showAllTopTargets
+                || (topTargetsRevealed && cursorInsideTopStrip(localX, localY))
+                || cursorNearTopCenter(localX, localY);
+        } else {
+            topTargetsRevealed = false;
+        }
+
+        const nextGroup = targetPlacement === "top" || showAllTargets
             ? ""
             : (cursorInsideRevealedGroup(localX, localY)
                 ? revealedGroupKey
@@ -433,7 +618,7 @@ QtObject {
         let shortestDistance = Number.POSITIVE_INFINITY;
         for (let index = 0; index < targets.length; index += 1) {
             const target = targets[index];
-            if ((!showAllTargets && target.groupKey !== revealedGroupKey)
+            if (!targetIsVisible(target)
                     || localX < target.targetX
                     || localX > target.targetX + targetWidth
                     || localY < target.targetY
@@ -472,6 +657,7 @@ QtObject {
         signalWindow = window;
         dragActive = true;
         revealedGroupKey = "";
+        topTargetsRevealed = false;
         hoveredIndex = -1;
         hoveredPreview = Qt.rect(0, 0, 0, 0);
         refreshOutputForCursor(true);
@@ -497,6 +683,7 @@ QtObject {
         overlayMapped = false;
         dragActive = false;
         revealedGroupKey = "";
+        topTargetsRevealed = false;
         hoveredIndex = -1;
         hoveredPreview = Qt.rect(0, 0, 0, 0);
         targets = [];
@@ -536,6 +723,15 @@ QtObject {
             return;
         }
 
+        // Signals and the active/signal windows cover normal moves. Keep a
+        // slower all-window fallback for compositor versions that occasionally
+        // miss the start signal, without walking every KWin window ten times a
+        // second while the desktop is idle.
+        idleFullScanCounter = (idleFullScanCounter + 1) % 4;
+        if (idleFullScanCounter !== 0) {
+            return;
+        }
+
         // In KWin's declarative API this is a list property (the JavaScript
         // action API exposes a windowList() function instead).
         const windows = Workspace.windowList || [];
@@ -549,7 +745,7 @@ QtObject {
     }
 
     property Timer scanTimer: Timer {
-        interval: controller.dragActive ? 24 : 100
+        interval: controller.dragActive ? 32 : 125
         repeat: true
         running: true
         onTriggered: controller.discoverInteractiveMove()
@@ -682,6 +878,20 @@ QtObject {
                 radius: 6
             }
 
+            Rectangle {
+                x: controller.topStripRect.x
+                y: controller.topStripRect.y
+                width: controller.topStripRect.width
+                height: controller.topStripRect.height
+                visible: controller.targetPlacement === "top"
+                    && (controller.showAllTopTargets || controller.topTargetsRevealed)
+                    && controller.topStripRect.width > 0
+                color: "#b51a222c"
+                border.width: 2
+                border.color: controller.accentBlue
+                radius: 12
+            }
+
             Repeater {
                 model: controller.targets
 
@@ -693,8 +903,7 @@ QtObject {
                     y: modelData.targetY
                     width: controller.targetWidth
                     height: controller.targetHeight
-                    visible: controller.showAllTargets
-                        || modelData.groupKey === controller.revealedGroupKey
+                    visible: controller.targetIsVisible(modelData)
                     radius: 9
                     color: index === controller.hoveredIndex
                         ? "#f01d2935"
@@ -753,6 +962,6 @@ QtObject {
     Component.onCompleted: {
         loadFeatureSettings();
         signalWindow = Workspace.activeWindow;
-        console.info("window-layouts-drag-overlay: Loaded reorderable input-transparent drag targets 0.1.4");
+        console.info("window-layouts-drag-overlay: Loaded input-transparent drag targets 1.0.0");
     }
 }

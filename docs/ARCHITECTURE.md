@@ -34,7 +34,7 @@ menu.
 | `packages/drag-overlay` | QML | Input-transparent layout targets displayed during an interactive move. |
 | `helpers/window-layouts-configurator-service` | Python | D-Bus host and canonical settings synchronizer. |
 | `cairo-dock-applet/window-layouts` | Python | Cairo-Dock sub-dock frontend and GTK configuration entry point. |
-| `cairo-dock-applet/window-layouts/configurator.py` | Python + GTK 3 | Shared custom-layout, feature, and group-order editor. |
+| `cairo-dock-applet/window-layouts/configurator.py` | Python + GTK 3 | Shared layout, custom-group, shortcut, feature, and group-order editor. |
 
 ## Settings and ownership
 
@@ -44,11 +44,23 @@ The user configuration is stored in `kwinrc`. `LayoutStorage` in
 | Setting | Canonical KWin group/key | Mirrored to |
 | --- | --- | --- |
 | Custom layouts | `Script-windowlayouts/CustomLayouts` | Floating button, drag targets, panel config |
+| Custom groups | `Script-windowlayouts/CustomGroups` | Floating button, drag targets, panel config |
 | Group order | `Script-windowlayouts/GroupOrder` | Floating button, drag targets, panel config |
 | Floating button enabled | `Plugins/windowlayoutsfloatingbuttonEnabled` | Panel config |
 | Drag targets enabled | `Plugins/windowlayoutsdragtargetsEnabled` | Panel config |
 | Show all drag targets | `Script-windowlayoutsdragtargets/ShowAllTargets` | Panel config |
+| Drag-target placement | `Script-windowlayoutsdragtargets/TargetPlacement` | Panel config |
+| Show all top targets | `Script-windowlayoutsdragtargets/ShowAllTopTargets` | Panel config |
 | Floating button size | `Script-windowlayoutsfloatingbutton/ButtonSize` | Panel config |
+| Layout padding | `Script-windowlayouts/LayoutPadding` | Drag-target preview, panel config |
+
+Global shortcuts are owned by KDE's `org.kde.kglobalaccel` service rather than
+`kwinrc`. Fixed layouts use stable action IDs. Each custom-layout record stores
+a stable `shortcutSlot` from 1 through 20 and resolves to
+`WindowLayoutsCustom<slot>`, so reordering a layout does not transfer its
+shortcut to a different layout. An optional `groupId` references a record in
+`CustomGroups`; an empty ID means unassigned. The same shortcut service also
+owns the fixed previous/next workspace and monitor movement actions.
 
 The panel stores its own copies in the Plasmoid's `General` configuration group.
 That copy lets its KCM configuration page bind normally to `cfg_*` properties.
@@ -63,13 +75,19 @@ configuration window applies changes.
 2. The frontend invokes `org.kde.kglobalaccel.Component.invokeShortcut` on the
    KWin component.
 3. `packages/kwin-script/contents/code/main.js` resolves an eligible target
-   window, calculates a rectangle relative to KWin's `MaximizeArea`, and sets
-   `frameGeometry`.
+   window, calculates a rectangle relative to KWin's `MaximizeArea`, applies
+   edge-aware padding, and sets `frameGeometry`.
 4. Before the first layout operation, the action script stores the original
    geometry for Restore.
 
 `MaximizeArea` is important: it excludes Plasma panels and other reserved
 screen edges, so a layout does not end up under a panel.
+
+Layout rectangles use normalized coordinates until the final geometry is
+calculated. This allows the same fixed or custom layout to scale across
+monitors with different resolutions, scale factors, and reserved panel areas.
+Padding is edge-aware: only boundaries inside the usable monitor area are
+inset, while boundaries coinciding with a usable screen edge remain flush.
 
 ### Apply configuration from the panel
 
@@ -77,9 +95,9 @@ screen edges, so a layout does not end up under a panel.
    **Apply** or **OK**.
 2. `packages/plasmoid/contents/ui/main.qml` observes changes and debounces the
    update through `contents/tools/sync-settings.sh` or `sync-layouts.sh`.
-3. `sync-layouts.sh` writes committed custom-layout JSON directly to the three
-   KWin script groups. `sync-settings.sh` calls the shared D-Bus configurator
-   service for feature settings and group order.
+3. `sync-layouts.sh` writes committed custom-layout and custom-group JSON
+   directly to the three KWin script groups. `sync-settings.sh` calls the
+   shared D-Bus configurator service for feature settings and group order.
 4. `LayoutStorage.save_feature_settings()` validates feature values, writes
    KWin configuration, mirrors panel values, and calls KWin reconfigure.
 
@@ -92,8 +110,10 @@ committing related values.
 2. Cairo-Dock forwards feature settings to the shared D-Bus service; the
    service's own window writes settings directly through `LayoutStorage`.
 3. The service mirrors settings back to the panel and reconfigures KWin.
-4. Cairo-Dock notices a changed group order in its periodic capability refresh
-   and rebuilds the sub-dock.
+4. Layout saves from the panel or shared service ask a running Cairo-Dock
+   applet to reload immediately. Cairo-Dock's periodic capability refresh is
+   the fallback for changed custom layouts, custom-group assignments, or group
+   order from any frontend.
 
 ### Floating button on Wayland
 
@@ -120,12 +140,18 @@ window.
 - `targetWindow()` chooses the active or most recently eligible normal window.
 - `rememberOriginalGeometry()` and `restoreWindow()` implement Restore.
 - `rectangleForLayout()` converts normalized layout fractions into pixel
-  geometry in the window's current `MaximizeArea`.
+  geometry in the window's current `MaximizeArea` and insets only internal
+  layout edges by the configured padding.
+- `normalizedGeometry()` and `matchingLayout()` let monitor movement preserve
+  either a recognized layout or proportional free-form geometry across
+  different usable monitor sizes.
 - `applyLayout()`, `maximizeWindow()`, and `centerWindow()` perform geometry
   changes.
-- `moveToAdjacentMonitor()` and `moveToAdjacentWorkspace()` implement wrapped
-  movement.
+- `moveToAdjacentMonitor()` implements wrapped, resolution-aware monitor
+  movement; `moveToAdjacentWorkspace()` implements wrapped workspace movement.
 - `loadCustomLayouts()` validates the persisted custom-layout JSON.
+- `loadConfiguration()` reloads custom layouts, custom groups, group order,
+  and padding when KWin reconfigures the script.
 - `openConfigurator()` requests `Show()` on the shared D-Bus service.
 
 The fixed action IDs are consumed by every frontend. When adding a fixed
@@ -138,12 +164,18 @@ drag-target model, and Cairo-Dock `FIXED_LAYOUTS` together.
 
 - `LayoutStorage.load()` / `save()` manage custom-layout JSON.
 - `load_feature_settings()` / `save_feature_settings()` manage feature flags,
-  size, and group order.
+  size, padding, and group order.
 - `_set_script_enabled()` explicitly loads or unloads optional declarative
   scripts. Reconfigure alone does not reliably unload a script that was loaded
   manually in the current session.
 - `SetFloatingButtonEnabled()` lets the floating button disable itself safely.
-- `SetFeatureSettings()` is the multi-setting D-Bus synchronization endpoint.
+- `SetFeatureSettingsV3()` is the current multi-setting D-Bus synchronization
+  endpoint. V1 and V2 remain available for older installed frontends and
+  preserve the current padding when they save their older setting set.
+- `ShortcutStorage` reads, checks, assigns, and clears KGlobalAccel actions.
+  Conflict reassignment removes only the chosen key from previous actions.
+- `GetShortcutsJson()` / `SetShortcutText()` support the Plasma shortcut page;
+  the GTK editor uses the same `ShortcutStorage` methods directly.
 
 `helpers/org.example.WindowLayouts.Configurator.service.in` makes the Python
 service D-Bus activatable in the user session.
@@ -160,9 +192,17 @@ service D-Bus activatable in the user session.
   inappropriate actions.
 
 `packages/plasmoid/contents/ui/config/ConfigLayouts.qml` is the Plasma KCM
-page. It has independent models for custom layouts and the six layout groups;
-the `store*()` functions only update `cfg_*` properties so Cancel remains
-safe.
+page. It has independent models for custom layouts, the grouped Saved layouts
+view, custom groups, and the six menu groups; the `store*()` functions only
+update `cfg_*` properties so Cancel remains safe.
+
+`ConfigShortcuts.qml` uses KDE's native `KeySequenceItem`, whose validator
+checks global and standard shortcut conflicts. Accepted changes are sent
+through `sync-shortcuts.sh` to the shared service.
+
+Custom shortcuts attach to stable numbered slots rather than list positions.
+Moving a custom layout within the Saved layouts list or assigning it to a
+different custom group therefore does not move its shortcut to another layout.
 
 ### Floating button and drag overlay
 
@@ -175,9 +215,9 @@ safe.
 `packages/drag-overlay/contents/ui/DragTargetController.qml`
 
 - `allLayouts()` reads custom layouts and group order.
-- `rebuildTargets()` places one or more target cards at each normalized layout
-  center.
-- `updateHover()` chooses the visible group or all groups, calculates preview
+- `rebuildTargets()` places cards at normalized layout centers or builds the
+  top-center strip, depending on `TargetPlacement`.
+- `updateHover()` reveals the selected target style, calculates preview
   geometry, and identifies the action to apply.
 - `finishDrag()` waits until the interactive move ends before invoking an
   action.
@@ -189,16 +229,24 @@ Group order also determines the order of cards stacked at identical centers.
 `cairo-dock-applet/window-layouts/window-layouts`
 
 - `refresh_subdock()` builds entries in the configured group order and creates
-  SVG previews.
+  SVG previews. Custom entries deliberately show only the layout name because
+  Cairo-Dock has limited label space; named group labels remain a panel and
+  floating-button presentation feature.
 - `_load_group_order()` follows the canonical KWin setting.
 - `_save_feature_settings()` delegates to the D-Bus service, then schedules a
   refresh after the asynchronous D-Bus save.
-- `_refresh_capabilities_if_changed()` also detects monitor, workspace, and
-  group-order changes made from another frontend.
+- `_refresh_capabilities_if_changed()` also detects custom-layout,
+  custom-group, monitor, workspace, and group-order changes made from another
+  frontend. Its slower background poll reuses the loaded values when rebuilding
+  the sub-dock and retains the previous monitor/workspace count if a transient
+  query fails.
 
 `cairo-dock-applet/cairo-dock-unlock-guard` and the files under
 `cairo-dock-applet/systemd` keep the single Cairo-Dock autostart instance on
-KDE's primary output after unlocks and display changes.
+KDE's primary output after unlocks and display changes. The guard applies a
+failure backoff to KScreen probes, skips them while locked, reveals an existing
+dock after a normal unlock, and reserves full restarts for topology changes or
+an unavailable dock.
 
 ## Adding a layout group
 
@@ -239,10 +287,19 @@ journalctl --user -f | grep -E 'window-layouts|windowlayouts'
 Test at least these cases before release:
 
 - panel, floating-button, and Cairo-Dock layout selection;
-- one and two monitor movement, including wrap-around;
+- one and two monitor movement, including wrap-around and monitors with
+  different resolutions or scale factors;
 - one and multiple virtual desktops, including wrap-around;
-- custom layouts and Restore;
+- custom layout creation, reordering, removal, grouping, and Restore;
+- custom-group creation, rename, removal, assignment, and Unassigned display;
+- fixed and custom shortcuts, clearing shortcuts, and accepting or rejecting a
+  detected conflict;
+- previous/next workspace and monitor shortcuts;
+- padding at zero and a non-zero value, including layouts that touch usable
+  monitor edges;
 - floating-button enable/disable and every size;
-- drag targets in proximity and immediate modes;
+- zone-center and top-center drag targets in proximity and immediate modes;
 - group order changed from both panel and GTK configurators;
+- settings synchronized among the panel, floating button, drag targets, and
+  Cairo-Dock without restarting the session;
 - lock/unlock and monitor disconnect/reconnect when Cairo-Dock is enabled.

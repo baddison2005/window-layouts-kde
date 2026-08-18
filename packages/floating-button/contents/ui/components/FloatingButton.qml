@@ -382,18 +382,87 @@ PlasmaCore.Dialog {
             return [];
         }
 
-        return parsed.slice(0, 20).filter(candidate => candidate
-            && typeof candidate.name === "string"
-            && Number.isFinite(candidate.x)
-            && Number.isFinite(candidate.y)
-            && Number.isFinite(candidate.width)
-            && Number.isFinite(candidate.height)
-            && candidate.x >= 0
-            && candidate.y >= 0
-            && candidate.width > 0
-            && candidate.height > 0
-            && candidate.x + candidate.width <= 1.000001
-            && candidate.y + candidate.height <= 1.000001);
+        const layouts = [];
+        const usedSlots = [];
+        const candidates = parsed.slice(0, 20);
+        for (let index = 0; index < candidates.length; index += 1) {
+            const candidate = candidates[index];
+            if (!candidate
+                    || typeof candidate.name !== "string"
+                    || !Number.isFinite(candidate.x)
+                    || !Number.isFinite(candidate.y)
+                    || !Number.isFinite(candidate.width)
+                    || !Number.isFinite(candidate.height)
+                    || candidate.x < 0
+                    || candidate.y < 0
+                    || candidate.width <= 0
+                    || candidate.height <= 0
+                    || candidate.x + candidate.width > 1.000001
+                    || candidate.y + candidate.height > 1.000001) {
+                continue;
+            }
+            let shortcutSlot = Number.isInteger(candidate.shortcutSlot)
+                && candidate.shortcutSlot >= 1
+                && candidate.shortcutSlot <= 20
+                && usedSlots.indexOf(candidate.shortcutSlot) < 0
+                    ? candidate.shortcutSlot
+                    : -1;
+            if (shortcutSlot < 0) {
+                for (let slot = 1; slot <= 20; slot += 1) {
+                    if (usedSlots.indexOf(slot) < 0) {
+                        shortcutSlot = slot;
+                        break;
+                    }
+                }
+            }
+            usedSlots.push(shortcutSlot);
+            layouts.push({
+                name: candidate.name,
+                x: candidate.x,
+                y: candidate.y,
+                width: candidate.width,
+                height: candidate.height,
+                shortcutSlot,
+                groupId: typeof candidate.groupId === "string" ? candidate.groupId : "",
+            });
+        }
+        return layouts;
+    }
+
+    function configuredCustomGroups() {
+        let parsed = [];
+        try {
+            const candidate = JSON.parse(String(KWin.readConfig("CustomGroups", "[]")));
+            if (Array.isArray(candidate)) {
+                parsed = candidate;
+            }
+        } catch (error) {
+            parsed = [];
+        }
+        const groups = {};
+        parsed.forEach(group => {
+            if (group
+                    && typeof group.id === "string"
+                    && group.id.length > 0
+                    && typeof group.name === "string"
+                    && group.name.trim().length > 0
+                    && groups[group.id] === undefined) {
+                groups[group.id] = group.name.trim();
+            }
+        });
+        return groups;
+    }
+
+    function customLayoutsInGroupOrder(layouts, groups) {
+        const ordered = layouts.filter(layout => !groups[layout.groupId]);
+        Object.keys(groups).forEach(groupId => {
+            layouts.forEach(layout => {
+                if (layout.groupId === groupId) {
+                    ordered.push(layout);
+                }
+            });
+        });
+        return ordered;
     }
 
     function rebuildMenu() {
@@ -418,14 +487,16 @@ PlasmaCore.Dialog {
         addMenuItem("twoThirds", "Two Thirds", "Center Two Thirds", "WindowLayoutsCenterTwoThirds", 1 / 6, 0, 2 / 3, 1, true, "");
         addMenuItem("twoThirds", "Two Thirds", "Right Two Thirds", "WindowLayoutsRightTwoThirds", 1 / 3, 0, 2 / 3, 1, true, "");
 
-        const customLayouts = validatedCustomLayouts();
+        let customLayouts = validatedCustomLayouts();
+        const customGroups = configuredCustomGroups();
+        customLayouts = customLayoutsInGroupOrder(customLayouts, customGroups);
         for (let index = 0; index < customLayouts.length; index += 1) {
             const layout = customLayouts[index];
             addMenuItem(
                 "custom",
-                "Custom",
+                customGroups[layout.groupId] || "Custom",
                 layout.name.trim() || `Custom Layout ${index + 1}`,
-                `WindowLayoutsCustom${index + 1}`,
+                `WindowLayoutsCustom${layout.shortcutSlot}`,
                 layout.x,
                 layout.y,
                 layout.width,

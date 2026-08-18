@@ -13,7 +13,7 @@
         "Id": "org.example.windowlayouts",
         "License": "GPL-2.0-or-later",
         "Name": "Window Layouts",
-        "Version": "0.5.1"
+        "Version": "1.0.0"
     },
     "X-Plasma-API-Minimum-Version": "6.0"
 }

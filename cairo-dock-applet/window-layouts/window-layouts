@@ -53,6 +53,8 @@ DEFAULT_GROUP_ORDER = (
     "custom",
     "window",
 )
+CAPABILITY_REFRESH_SECONDS = 15
+MAX_LAYOUT_PADDING = 200
 
 
 class WindowLayoutsApplet(CDApplet):
@@ -65,6 +67,7 @@ class WindowLayoutsApplet(CDApplet):
         self.monitor_count = None
         self.workspace_count = None
         self.group_order = list(DEFAULT_GROUP_ORDER)
+        self.custom_layout_signature = None
         cache_root = os.environ.get(
             "XDG_CACHE_HOME",
             os.path.expanduser("~/.cache"),
@@ -107,7 +110,10 @@ class WindowLayoutsApplet(CDApplet):
         if not isinstance(layouts, list):
             return []
 
+        custom_groups = self._load_custom_groups()
+        group_names = {group["id"]: group["name"] for group in custom_groups}
         valid_layouts = []
+        used_slots = set()
         for index, layout in enumerate(layouts[:20]):
             if not isinstance(layout, dict):
                 continue
@@ -131,15 +137,55 @@ class WindowLayoutsApplet(CDApplet):
             if (x < 0 or y < 0 or width <= 0 or height <= 0
                     or x + width > 1.000001 or y + height > 1.000001):
                 continue
+            slot = layout.get("shortcutSlot")
+            if (isinstance(slot, bool) or not isinstance(slot, int)
+                    or not 1 <= slot <= 20 or slot in used_slots):
+                slot = next(
+                    (candidate for candidate in range(1, 21)
+                     if candidate not in used_slots),
+                    index + 1,
+                )
+            used_slots.add(slot)
+            group_id = layout.get("groupId", "")
+            if not isinstance(group_id, str) or group_id not in group_names:
+                group_id = ""
             valid_layouts.append({
                 "name": name.strip() or f"Custom Layout {index + 1}",
-                "action": f"WindowLayoutsCustom{index + 1}",
+                "action": f"WindowLayoutsCustom{slot}",
+                "group_name": group_names.get(group_id, ""),
                 "x": x,
                 "y": y,
                 "width": width,
                 "height": height,
             })
         return valid_layouts
+
+    def _load_custom_groups(self):
+        try:
+            encoded = self._command_output([
+                "kreadconfig6", "--file", "kwinrc",
+                "--group", "Script-windowlayouts",
+                "--key", "CustomGroups", "--default", "[]",
+            ])
+            groups = json.loads(encoded or "[]")
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            return []
+        validated = []
+        used_ids = set()
+        if not isinstance(groups, list):
+            return validated
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = group.get("id")
+            name = group.get("name")
+            if (not isinstance(group_id, str) or not group_id
+                    or group_id in used_ids or not isinstance(name, str)
+                    or not name.strip()):
+                continue
+            validated.append({"id": group_id, "name": name.strip()})
+            used_ids.add(group_id)
+        return validated
 
     def _save_custom_layouts(self, layouts):
         layouts_json = json.dumps(layouts, separators=(",", ":"))
@@ -252,6 +298,42 @@ print(updated ? "updated" : "missing");"""
         )
 
         try:
+            target_placement = self._command_output([
+                "kreadconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                "Script-windowlayoutsdragtargets",
+                "--key",
+                "TargetPlacement",
+                "--default",
+                "zones",
+            ])
+        except (OSError, subprocess.SubprocessError):
+            target_placement = "zones"
+        settings["drag_target_placement"] = (
+            target_placement if target_placement in ("zones", "top") else "zones"
+        )
+
+        try:
+            show_all_top_targets = self._command_output([
+                "kreadconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                "Script-windowlayoutsdragtargets",
+                "--key",
+                "ShowAllTopTargets",
+                "--default",
+                "false",
+            ])
+        except (OSError, subprocess.SubprocessError):
+            show_all_top_targets = "false"
+        settings["show_all_top_drag_targets"] = (
+            show_all_top_targets.strip().lower() in ("1", "true", "yes", "on")
+        )
+
+        try:
             floating_button_size = self._command_output([
                 "kreadconfig6",
                 "--file",
@@ -269,6 +351,24 @@ print(updated ? "updated" : "missing");"""
             floating_button_size
             if floating_button_size in FLOATING_BUTTON_SIZES
             else "default"
+        )
+        try:
+            layout_padding = int(self._command_output([
+                "kreadconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                "Script-windowlayouts",
+                "--key",
+                "LayoutPadding",
+                "--default",
+                "0",
+            ]))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            layout_padding = 0
+        settings["layout_padding"] = max(
+            0,
+            min(layout_padding, MAX_LAYOUT_PADDING),
         )
         settings["group_order"] = self._load_group_order()
         return settings
@@ -305,21 +405,35 @@ print(updated ? "updated" : "missing");"""
     def _save_feature_settings(self, settings):
         floating_enabled = bool(settings.get("floating_button_enabled", False))
         drag_targets_enabled = bool(settings.get("drag_targets_enabled", False))
-        show_all_drag_targets = bool(settings.get("show_all_drag_targets", False))
+        target_placement = str(settings.get("drag_target_placement", "zones"))
+        if target_placement not in ("zones", "top"):
+            target_placement = "zones"
+        show_all_zone_targets = bool(settings.get("show_all_drag_targets", False))
+        show_all_top_targets = bool(
+            settings.get("show_all_top_drag_targets", False)
+        )
         floating_button_size = str(settings.get("floating_button_size", "default"))
         if floating_button_size not in FLOATING_BUTTON_SIZES:
             floating_button_size = "default"
+        try:
+            layout_padding = int(settings.get("layout_padding", 0))
+        except (TypeError, ValueError):
+            layout_padding = 0
+        layout_padding = max(0, min(layout_padding, MAX_LAYOUT_PADDING))
         group_order = self._validated_group_order(settings.get("group_order", []))
         self._command_output([
             "qdbus-qt6",
             "org.example.WindowLayouts.Configurator",
             "/org/example/WindowLayouts/Configurator",
-            "org.example.WindowLayouts.Configurator.SetFeatureSettings",
+            "org.example.WindowLayouts.Configurator.SetFeatureSettingsV3",
             "true" if floating_enabled else "false",
             "true" if drag_targets_enabled else "false",
-            "true" if show_all_drag_targets else "false",
+            target_placement,
+            "true" if show_all_zone_targets else "false",
+            "true" if show_all_top_targets else "false",
             floating_button_size,
             json.dumps(group_order, separators=(",", ":")),
+            str(layout_padding),
         ], timeout=10)
         GLib.timeout_add(300, self._refresh_subdock_after_save)
 
@@ -342,13 +456,16 @@ print(updated ? "updated" : "missing");"""
                 "count",
             ))
         except dbus.DBusException:
-            return 1
+            return self.workspace_count if self.workspace_count is not None else 1
 
     def _monitor_count(self):
         try:
-            screen_data = json.loads(self._command_output(["kscreen-doctor", "-j"]))
+            screen_data = json.loads(self._command_output(
+                ["kscreen-doctor", "-j"],
+                timeout=3,
+            ))
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
-            return 1
+            return self.monitor_count if self.monitor_count is not None else 1
 
         outputs = screen_data.get("outputs", [])
         return sum(
@@ -414,13 +531,40 @@ print(updated ? "updated" : "missing");"""
         monitor_count = self._monitor_count()
         workspace_count = self._workspace_count()
         group_order = self._load_group_order()
+        custom_layouts = self._load_custom_layouts()
+        layout_signature = self._custom_layout_signature(custom_layouts)
         if (monitor_count != self.monitor_count
                 or workspace_count != self.workspace_count
-                or group_order != self.group_order):
-            self.refresh_subdock()
+                or group_order != self.group_order
+                or layout_signature != self.custom_layout_signature):
+            self.refresh_subdock(
+                monitor_count=monitor_count,
+                workspace_count=workspace_count,
+                group_order=group_order,
+                custom_layouts=custom_layouts,
+            )
         return GLib.SOURCE_CONTINUE
 
-    def refresh_subdock(self):
+    @staticmethod
+    def _custom_layout_signature(custom_layouts):
+        """Return the values that affect Cairo-Dock's custom-layout entries."""
+        return tuple((
+            layout["name"],
+            layout["action"],
+            layout["group_name"],
+            layout["x"],
+            layout["y"],
+            layout["width"],
+            layout["height"],
+        ) for layout in custom_layouts)
+
+    def refresh_subdock(
+        self,
+        monitor_count=None,
+        workspace_count=None,
+        group_order=None,
+        custom_layouts=None,
+    ):
         """Rebuild entries from the latest KWin and display configuration."""
         sub_icons = []
         self.entry_actions = {}
@@ -434,7 +578,11 @@ print(updated ? "updated" : "missing");"""
                 action,
             ))
 
-        custom_layouts = self._load_custom_layouts()
+        if custom_layouts is None:
+            custom_layouts = self._load_custom_layouts()
+        self.custom_layout_signature = self._custom_layout_signature(
+            custom_layouts
+        )
         self.custom_layout_count = len(custom_layouts)
         for layout in custom_layouts:
             grouped_entries["custom"].append((
@@ -456,7 +604,11 @@ print(updated ? "updated" : "missing");"""
             )
             grouped_entries["window"].append((label, image, action))
 
-        self.workspace_count = self._workspace_count()
+        self.workspace_count = (
+            workspace_count
+            if workspace_count is not None
+            else self._workspace_count()
+        )
         if self.workspace_count > 1:
             grouped_entries["window"].append((
                 "Previous Workspace",
@@ -469,7 +621,11 @@ print(updated ? "updated" : "missing");"""
                 "WindowLayoutsNextWorkspace",
             ))
 
-        self.monitor_count = self._monitor_count()
+        self.monitor_count = (
+            monitor_count
+            if monitor_count is not None
+            else self._monitor_count()
+        )
         monitor_actions_enabled = self.monitor_count > 1
         for label, direction, action in (
             ("Previous Monitor", "previous", "WindowLayoutsPreviousMonitor"),
@@ -485,7 +641,11 @@ print(updated ? "updated" : "missing");"""
 
         # Cairo-Dock has no section headers, so append each group's contiguous
         # block in the configured order to preserve the same menu structure.
-        self.group_order = self._load_group_order()
+        self.group_order = (
+            group_order
+            if group_order is not None
+            else self._load_group_order()
+        )
         for group_id in self.group_order:
             for label, image, action in grouped_entries[group_id]:
                 self._append_entry(sub_icons, label, image, action)
@@ -521,14 +681,13 @@ print(updated ? "updated" : "missing");"""
 
     def _open_plasma_configuration(self):
         try:
-            if self.configurator is None:
-                self.configurator = WindowLayoutsConfigurator(
-                    self._load_custom_layouts,
-                    self._save_custom_layouts,
-                    self._load_feature_settings,
-                    self._save_feature_settings,
-                )
-            self.configurator.show_configurator()
+            service = self.session_bus.get_object(
+                "org.example.WindowLayouts.Configurator",
+                "/org/example/WindowLayouts/Configurator",
+            )
+            dbus.Interface(
+                service, "org.example.WindowLayouts.Configurator"
+            ).Show()
         except Exception as error:
             self._show_error(f"Could not open the layout configurator: {error}")
 
@@ -538,7 +697,10 @@ print(updated ? "updated" : "missing");"""
         if os.path.exists(icon_path):
             self.icon.SetIcon(icon_path)
         self.refresh_subdock()
-        GLib.timeout_add_seconds(5, self._refresh_capabilities_if_changed)
+        GLib.timeout_add_seconds(
+            CAPABILITY_REFRESH_SECONDS,
+            self._refresh_capabilities_if_changed,
+        )
 
     def reload(self):
         self.refresh_subdock()

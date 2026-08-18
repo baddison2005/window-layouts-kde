@@ -23,7 +23,9 @@ from gi.repository import Gdk, GLib  # noqa: E402
 
 
 CAIRO_DOCK_UNIT = r"app-cairo\x2ddock@autostart.service"
-OUTPUT_POLL_SECONDS = 3
+OUTPUT_POLL_SECONDS = 10
+OUTPUT_FAILURE_BACKOFF_SECONDS = 60
+OUTPUT_QUERY_TIMEOUT_SECONDS = 3
 RECOVERY_DELAY_MS = 2500
 UNLOCK_DELAY_MS = 1500
 
@@ -48,7 +50,7 @@ def output_state():
     """Return a stable active-output signature and KScreen's primary output."""
     completed = _run(
         ["kscreen-doctor", "-j"],
-        timeout=5,
+        timeout=OUTPUT_QUERY_TIMEOUT_SECONDS,
         capture_output=True,
         text=True,
     )
@@ -268,6 +270,11 @@ class SessionGuard:
         self.screen_locked = False
         state = output_state()
         self.output_signature = state[0] if state is not None else None
+        self.next_output_probe = (
+            0.0
+            if state is not None
+            else time.monotonic() + OUTPUT_FAILURE_BACKOFF_SECONDS
+        )
 
         bus = dbus.SessionBus()
         bus.add_signal_receiver(
@@ -300,9 +307,24 @@ class SessionGuard:
         self._schedule_restart("screen unlock", UNLOCK_DELAY_MS)
 
     def _check_outputs(self):
+        if self.screen_locked:
+            return GLib.SOURCE_CONTINUE
+
+        now = time.monotonic()
+        if now < self.next_output_probe:
+            return GLib.SOURCE_CONTINUE
+
         state = output_state()
         if state is None:
+            # A blocked KWin/KScreen request is itself a sign that the display
+            # stack is unhealthy. Do not immediately queue another request and
+            # add pressure to the compositor; retry after a quiet period.
+            self.next_output_probe = (
+                time.monotonic() + OUTPUT_FAILURE_BACKOFF_SECONDS
+            )
             return GLib.SOURCE_CONTINUE
+
+        self.next_output_probe = time.monotonic() + OUTPUT_POLL_SECONDS
 
         signature, _primary = state
         if self.output_signature is None:
@@ -319,7 +341,22 @@ class SessionGuard:
     def _restart(self):
         self.pending_restart = None
         reasons = " and ".join(sorted(self.pending_reasons))
+        topology_changed = "output topology change" in self.pending_reasons
         self.pending_reasons.clear()
+
+        # Cairo-Dock 3.6.2 can crash in its Dustbin plug-in while shutting
+        # down. A normal unlock usually only needs the existing layer-shell
+        # surface to be revealed, so avoid a full process restart when its
+        # D-Bus API is still responsive. Output changes still require restart
+        # because Cairo-Dock reads its monitor index during startup.
+        if not topology_changed and reveal_cairo_dock():
+            print(
+                "cairo-dock-session-guard: revealed the existing dock after "
+                f"{reasons or 'session recovery'}",
+                flush=True,
+            )
+            return GLib.SOURCE_REMOVE
+
         restart_cairo_dock(reasons or "session recovery")
         return GLib.SOURCE_REMOVE
 

@@ -99,9 +99,32 @@ kwriteconfig6 \
 
 kwriteconfig6 \
     --file kwinrc \
+    --group Script-windowlayoutsdragtargets \
+    --key TargetPlacement \
+    zones
+
+kwriteconfig6 \
+    --file kwinrc \
+    --group Script-windowlayoutsdragtargets \
+    --key ShowAllTopTargets \
+    --type bool \
+    false
+
+kwriteconfig6 \
+    --file kwinrc \
     --group Script-windowlayoutsfloatingbutton \
     --key ButtonSize \
     default
+
+for group in Script-windowlayouts Script-windowlayoutsdragtargets
+do
+    kwriteconfig6 \
+        --file kwinrc \
+        --group "$group" \
+        --key LayoutPadding \
+        --type int \
+        0
+done
 
 default_group_order='["halves","quarters","thirds","twoThirds","custom","window"]'
 for group in \
@@ -135,6 +158,26 @@ custom_layouts=$(kreadconfig6 \
     --group Script-windowlayouts \
     --key CustomLayouts \
     --default '[]')
+custom_layouts_escaped=${custom_layouts//\\/\\\\}
+custom_layouts_escaped=${custom_layouts_escaped//\"/\\\"}
+custom_groups=$(kreadconfig6 \
+    --file kwinrc \
+    --group Script-windowlayouts \
+    --key CustomGroups \
+    --default '[]')
+custom_groups_escaped=${custom_groups//\\/\\\\}
+custom_groups_escaped=${custom_groups_escaped//\"/\\\"}
+for group in \
+    Script-windowlayouts \
+    Script-windowlayoutsfloatingbutton \
+    Script-windowlayoutsdragtargets
+do
+    kwriteconfig6 \
+        --file kwinrc \
+        --group "$group" \
+        --key CustomGroups \
+        "$custom_groups"
+done
 kwriteconfig6 \
     --file kwinrc \
     --group Script-windowlayoutsfloatingbutton \
@@ -157,7 +200,10 @@ for (var panelIndex = 0; panelIndex < panelIds.length && !updated; panelIndex++)
             widget.writeConfig("floatingButtonEnabled", false);
             widget.writeConfig("dragTargetsEnabled", false);
             widget.writeConfig("showAllDragTargets", false);
+            widget.writeConfig("dragTargetPlacement", "zones");
+            widget.writeConfig("showAllTopDragTargets", false);
             widget.writeConfig("floatingButtonSize", "default");
+            widget.writeConfig("layoutPadding", 0);
             widget.writeConfig("groupOrder", "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"window\"]");
             updated = true;
             break;
@@ -170,6 +216,27 @@ print(updated ? "updated" : "missing");'
         /PlasmaShell \
         org.kde.PlasmaShell.evaluateScript \
         "$settings_script" >/dev/null || true
+
+    layout_script="var updated = false;
+for (var panelIndex = 0; panelIndex < panelIds.length && !updated; panelIndex++) {
+    var panel = panelById(panelIds[panelIndex]);
+    for (var widgetIndex = 0; widgetIndex < panel.widgetIds.length; widgetIndex++) {
+        var widget = panel.widgetById(panel.widgetIds[widgetIndex]);
+        if (widget && widget.type === \"org.example.windowlayouts\") {
+            widget.currentConfigGroup = [\"General\"];
+            widget.writeConfig(\"customLayouts\", \"$custom_layouts_escaped\");
+            widget.writeConfig(\"customGroups\", \"$custom_groups_escaped\");
+            updated = true;
+            break;
+        }
+    }
+}
+print(updated ? \"updated\" : \"missing\");"
+    qdbus-qt6 \
+        org.kde.plasmashell \
+        /PlasmaShell \
+        org.kde.PlasmaShell.evaluateScript \
+        "$layout_script" >/dev/null || true
 
     qdbus-qt6 org.kde.KWin /KWin reconfigure >/dev/null
 

@@ -5,6 +5,9 @@
 
 const LOG_PREFIX = "window-layouts:";
 const MAX_CUSTOM_LAYOUTS = 20;
+const MAX_LAYOUT_PADDING = 200;
+const LAYOUT_EDGE_EPSILON = 0.000001;
+const GEOMETRY_MATCH_TOLERANCE = 3;
 const CONFIGURATOR_SERVICE = "org.example.WindowLayouts.Configurator";
 const CONFIGURATOR_PATH = "/org/example/WindowLayouts/Configurator";
 const CONFIGURATOR_INTERFACE = "org.example.WindowLayouts.Configurator";
@@ -34,6 +37,8 @@ const originalGeometry = new Map();
 const watchedWindows = new Map();
 let lastActiveWindow = null;
 let customLayouts = [];
+let customGroups = {};
+let layoutPadding = 0;
 
 function log(message) {
     console.info(`${LOG_PREFIX} ${message}`);
@@ -109,11 +114,46 @@ function leaveSpecialWindowStates(window) {
     window.setMaximize(false, false);
 }
 
-function rectangleForLayout(area, layout) {
-    const left = Math.round(area.x + area.width * layout.x);
-    const top = Math.round(area.y + area.height * layout.y);
-    const right = Math.round(area.x + area.width * (layout.x + layout.width));
-    const bottom = Math.round(area.y + area.height * (layout.y + layout.height));
+function constrainedInsets(size, startInset, endInset) {
+    const maximumTotal = Math.max(0, size - 1);
+    const requestedTotal = startInset + endInset;
+    if (requestedTotal <= maximumTotal) {
+        return { start: startInset, end: endInset };
+    }
+    if (requestedTotal <= 0) {
+        return { start: 0, end: 0 };
+    }
+
+    const start = Math.floor(maximumTotal * startInset / requestedTotal);
+    return { start, end: maximumTotal - start };
+}
+
+function rectangleForLayout(area, layout, applyPadding = true) {
+    let left = Math.round(area.x + area.width * layout.x);
+    let top = Math.round(area.y + area.height * layout.y);
+    let right = Math.round(area.x + area.width * (layout.x + layout.width));
+    let bottom = Math.round(area.y + area.height * (layout.y + layout.height));
+
+    // Keep edges that coincide with the usable monitor boundary flush. Every
+    // internal edge is inset by the configured number of logical pixels.
+    const horizontalInsets = constrainedInsets(
+        right - left,
+        applyPadding && layout.x > LAYOUT_EDGE_EPSILON ? layoutPadding : 0,
+        applyPadding && layout.x + layout.width < 1 - LAYOUT_EDGE_EPSILON
+            ? layoutPadding
+            : 0,
+    );
+    const verticalInsets = constrainedInsets(
+        bottom - top,
+        applyPadding && layout.y > LAYOUT_EDGE_EPSILON ? layoutPadding : 0,
+        applyPadding && layout.y + layout.height < 1 - LAYOUT_EDGE_EPSILON
+            ? layoutPadding
+            : 0,
+    );
+    left += horizontalInsets.start;
+    right -= horizontalInsets.end;
+    top += verticalInsets.start;
+    bottom -= verticalInsets.end;
 
     return {
         x: left,
@@ -121,6 +161,42 @@ function rectangleForLayout(area, layout) {
         width: Math.max(1, right - left),
         height: Math.max(1, bottom - top),
     };
+}
+
+function clamp(value, minimum, maximum) {
+    return Math.max(minimum, Math.min(value, maximum));
+}
+
+function normalizedGeometry(area, geometry) {
+    if (area.width <= 0 || area.height <= 0) {
+        return { x: 0, y: 0, width: 1, height: 1 };
+    }
+
+    const width = clamp(geometry.width / area.width, 1 / area.width, 1);
+    const height = clamp(geometry.height / area.height, 1 / area.height, 1);
+    const x = clamp((geometry.x - area.x) / area.width, 0, 1 - width);
+    const y = clamp((geometry.y - area.y) / area.height, 0, 1 - height);
+    return { x, y, width, height };
+}
+
+function rectanglesApproximatelyEqual(first, second, tolerance = GEOMETRY_MATCH_TOLERANCE) {
+    return Math.abs(first.x - second.x) <= tolerance
+        && Math.abs(first.y - second.y) <= tolerance
+        && Math.abs(first.width - second.width) <= tolerance
+        && Math.abs(first.height - second.height) <= tolerance;
+}
+
+function matchingLayout(area, geometry) {
+    const candidates = layouts.concat(customLayouts);
+    for (const layout of candidates) {
+        if (rectanglesApproximatelyEqual(
+            rectangleForLayout(area, layout),
+            geometry,
+        )) {
+            return layout;
+        }
+    }
+    return null;
 }
 
 function isFiniteNumber(value) {
@@ -159,6 +235,12 @@ function validatedCustomLayout(candidate, index) {
         y,
         width,
         height,
+        shortcutSlot: Number.isInteger(candidate.shortcutSlot)
+            && candidate.shortcutSlot >= 1
+            && candidate.shortcutSlot <= MAX_CUSTOM_LAYOUTS
+                ? candidate.shortcutSlot
+                : index + 1,
+        groupId: typeof candidate.groupId === "string" ? candidate.groupId : "",
     };
 }
 
@@ -180,12 +262,53 @@ function loadCustomLayouts() {
         return;
     }
 
+    const usedSlots = [];
     customLayouts = parsedLayouts
         .slice(0, MAX_CUSTOM_LAYOUTS)
         .map(validatedCustomLayout)
-        .filter(layout => layout !== null);
+        .filter(layout => layout !== null)
+        .map(layout => {
+            if (usedSlots.indexOf(layout.shortcutSlot) >= 0) {
+                for (let slot = 1; slot <= MAX_CUSTOM_LAYOUTS; slot += 1) {
+                    if (usedSlots.indexOf(slot) < 0) {
+                        layout.shortcutSlot = slot;
+                        break;
+                    }
+                }
+            }
+            usedSlots.push(layout.shortcutSlot);
+            return layout;
+        });
+
+    customGroups = {};
+    try {
+        const parsedGroups = JSON.parse(String(readConfig("CustomGroups", "[]")));
+        if (Array.isArray(parsedGroups)) {
+            for (const group of parsedGroups) {
+                if (group
+                        && typeof group.id === "string"
+                        && group.id.length > 0
+                        && typeof group.name === "string"
+                        && group.name.trim().length > 0
+                        && customGroups[group.id] === undefined) {
+                    customGroups[group.id] = group.name.trim();
+                }
+            }
+        }
+    } catch (error) {
+        log(`Could not parse custom groups: ${error}`);
+    }
 
     log(`Loaded ${customLayouts.length} custom layout(s)`);
+}
+
+function loadConfiguration() {
+    loadCustomLayouts();
+    const configuredPadding = Number(readConfig("LayoutPadding", 0));
+    layoutPadding = Number.isFinite(configuredPadding)
+        ? clamp(Math.round(configuredPadding), 0, MAX_LAYOUT_PADDING)
+        : 0;
+    log(`Using ${layoutPadding}px layout padding`);
 }
 
 function applyLayout(layout, preferredWindow = null) {
@@ -274,14 +397,44 @@ function moveToAdjacentMonitor(offset, preferredWindow = null) {
         return;
     }
 
-    let currentIndex = outputs.indexOf(window.output);
+    const sourceOutput = window.output;
+    let currentIndex = outputs.indexOf(sourceOutput);
     if (currentIndex < 0) {
         currentIndex = 0;
     }
 
-    rememberOriginalGeometry(window);
     const targetOutput = outputs[wrappedIndex(currentIndex, offset, outputs.length)];
+    const sourceArea = workspace.clientArea(KWin.MaximizeArea, window);
+    const sourceGeometry = copyRectangle(window.frameGeometry);
+    const sourceLayout = matchingLayout(sourceArea, sourceGeometry);
+    const relativeGeometry = sourceLayout
+        ? null
+        : normalizedGeometry(sourceArea, sourceGeometry);
+    const fillsSourceArea = rectanglesApproximatelyEqual(
+        sourceArea,
+        sourceGeometry,
+    );
+
+    rememberOriginalGeometry(window);
     workspace.sendClientToScreen(window, targetOutput);
+
+    // KWin keeps full-screen and maximized windows in their special state.
+    // Normal windows are explicitly rescaled into the destination's usable
+    // area, including its resolution, scaling, panels, and global position.
+    if (!window.fullScreen && !fillsSourceArea) {
+        const targetDesktop = workspace.currentDesktopForScreen(targetOutput)
+            || workspace.currentDesktop;
+        const targetArea = workspace.clientArea(
+            KWin.MaximizeArea,
+            targetOutput,
+            targetDesktop,
+        );
+        window.frameGeometry = rectangleForLayout(
+            targetArea,
+            sourceLayout || relativeGeometry,
+            sourceLayout !== null,
+        );
+    }
     lastActiveWindow = window;
 }
 
@@ -335,7 +488,7 @@ function openConfigurator() {
     );
 }
 
-loadCustomLayouts();
+loadConfiguration();
 
 for (const layout of layouts) {
     registerShortcut(
@@ -355,8 +508,9 @@ for (let index = 0; index < MAX_CUSTOM_LAYOUTS; index += 1) {
         `Window Layouts: Custom ${index + 1}`,
         "",
         () => {
-            if (customLayouts[index]) {
-                applyLayout(customLayouts[index]);
+            const layout = customLayouts.find(candidate => candidate.shortcutSlot === index + 1);
+            if (layout) {
+                applyLayout(layout);
             }
         },
     );
@@ -427,7 +581,9 @@ registerUserActionsMenu(window => ({
             triggered: () => applyLayout(layout, window),
         })),
         ...customLayouts.map(layout => ({
-            title: layout.name,
+            title: customGroups[layout.groupId]
+                ? `${customGroups[layout.groupId]} — ${layout.name}`
+                : layout.name,
             triggered: () => applyLayout(layout, window),
         })),
         {
@@ -468,6 +624,6 @@ registerUserActionsMenu(window => ({
 workspace.windowList().forEach(watchWindow);
 workspace.windowActivated.connect(rememberWindow);
 rememberWindow(workspace.activeWindow);
-options.configChanged.connect(loadCustomLayouts);
+options.configChanged.connect(loadConfiguration);
 
 log("Loaded window layouts");

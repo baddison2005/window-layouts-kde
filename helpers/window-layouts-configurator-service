@@ -25,13 +25,18 @@ SERVICE_NAME = "org.example.WindowLayouts.Configurator"
 OBJECT_PATH = "/org/example/WindowLayouts/Configurator"
 INTERFACE_NAME = SERVICE_NAME
 MAX_LAYOUTS = 20
+CUSTOM_GROUPS_KEY = "CustomGroups"
 FLOATING_BUTTON_KEY = "windowlayoutsfloatingbuttonEnabled"
 DRAG_TARGETS_KEY = "windowlayoutsdragtargetsEnabled"
 FLOATING_BUTTON_GROUP = "Script-windowlayoutsfloatingbutton"
 DRAG_TARGETS_GROUP = "Script-windowlayoutsdragtargets"
 FLOATING_BUTTON_SIZE_KEY = "ButtonSize"
 SHOW_ALL_TARGETS_KEY = "ShowAllTargets"
+TARGET_PLACEMENT_KEY = "TargetPlacement"
+SHOW_ALL_TOP_TARGETS_KEY = "ShowAllTopTargets"
 GROUP_ORDER_KEY = "GroupOrder"
+LAYOUT_PADDING_KEY = "LayoutPadding"
+MAX_LAYOUT_PADDING = 200
 FLOATING_BUTTON_SIZES = ("small", "default", "big", "extraBig")
 DEFAULT_GROUP_ORDER = (
     "halves",
@@ -41,6 +46,91 @@ DEFAULT_GROUP_ORDER = (
     "custom",
     "window",
 )
+FIXED_SHORTCUTS = (
+    ("WindowLayoutsLeftHalf", "Window Layouts: Left Half", "Left Half"),
+    ("WindowLayoutsRightHalf", "Window Layouts: Right Half", "Right Half"),
+    ("WindowLayoutsTopHalf", "Window Layouts: Top Half", "Top Half"),
+    ("WindowLayoutsBottomHalf", "Window Layouts: Bottom Half", "Bottom Half"),
+    ("WindowLayoutsTopLeft", "Window Layouts: Top Left", "Top Left"),
+    ("WindowLayoutsTopRight", "Window Layouts: Top Right", "Top Right"),
+    ("WindowLayoutsBottomLeft", "Window Layouts: Bottom Left", "Bottom Left"),
+    ("WindowLayoutsBottomRight", "Window Layouts: Bottom Right", "Bottom Right"),
+    ("WindowLayoutsLeftThird", "Window Layouts: Left Third", "Left Third"),
+    ("WindowLayoutsCenterThird", "Window Layouts: Center Third", "Center Third"),
+    ("WindowLayoutsRightThird", "Window Layouts: Right Third", "Right Third"),
+    ("WindowLayoutsLeftTwoThirds", "Window Layouts: Left Two Thirds", "Left Two Thirds"),
+    ("WindowLayoutsCenterTwoThirds", "Window Layouts: Center Two Thirds", "Center Two Thirds"),
+    ("WindowLayoutsRightTwoThirds", "Window Layouts: Right Two Thirds", "Right Two Thirds"),
+    ("WindowLayoutsMaximize", "Window Layouts: Maximize", "Maximize"),
+    ("WindowLayoutsCenter", "Window Layouts: Center", "Center"),
+    ("WindowLayoutsRestore", "Window Layouts: Restore", "Restore"),
+    (
+        "WindowLayoutsPreviousWorkspace",
+        "Window Layouts: Move to Previous Workspace",
+        "Move to Previous Workspace",
+    ),
+    (
+        "WindowLayoutsNextWorkspace",
+        "Window Layouts: Move to Next Workspace",
+        "Move to Next Workspace",
+    ),
+    (
+        "WindowLayoutsPreviousMonitor",
+        "Window Layouts: Move to Previous Monitor",
+        "Move to Previous Monitor",
+    ),
+    (
+        "WindowLayoutsNextMonitor",
+        "Window Layouts: Move to Next Monitor",
+        "Move to Next Monitor",
+    ),
+)
+
+QT_SHIFT = 0x02000000
+QT_CONTROL = 0x04000000
+QT_ALT = 0x08000000
+QT_META = 0x10000000
+QT_KEY_MASK = 0x01FFFFFF
+QT_NAMED_KEYS = {
+    "escape": 0x01000000,
+    "esc": 0x01000000,
+    "tab": 0x01000001,
+    "backtab": 0x01000002,
+    "backspace": 0x01000003,
+    "return": 0x01000004,
+    "enter": 0x01000005,
+    "insert": 0x01000006,
+    "delete": 0x01000007,
+    "pause": 0x01000008,
+    "print": 0x01000009,
+    "home": 0x01000010,
+    "end": 0x01000011,
+    "left": 0x01000012,
+    "up": 0x01000013,
+    "right": 0x01000014,
+    "down": 0x01000015,
+    "pageup": 0x01000016,
+    "pgup": 0x01000016,
+    "pagedown": 0x01000017,
+    "pgdown": 0x01000017,
+    "space": 0x20,
+}
+QT_KEY_NAMES = {
+    value: name.title() for name, value in QT_NAMED_KEYS.items()
+    if name not in ("esc", "pgup", "pgdown")
+}
+QT_KEY_NAMES.update({
+    0x01000000: "Esc",
+    0x01000010: "Home",
+    0x01000011: "End",
+    0x01000012: "Left",
+    0x01000013: "Up",
+    0x01000014: "Right",
+    0x01000015: "Down",
+    0x01000016: "PageUp",
+    0x01000017: "PageDown",
+    0x20: "Space",
+})
 
 
 class LayoutStorage:
@@ -58,7 +148,7 @@ class LayoutStorage:
         return completed.stdout.strip()
 
     @staticmethod
-    def _validated_layout(candidate, index):
+    def _validated_layout(candidate, index, used_slots=None, group_ids=None):
         if not isinstance(candidate, dict):
             return None
 
@@ -82,13 +172,60 @@ class LayoutStorage:
                 or x + width > 1.000001 or y + height > 1.000001):
             return None
 
+        used_slots = used_slots if used_slots is not None else []
+        slot = candidate.get("shortcutSlot")
+        if (isinstance(slot, bool) or not isinstance(slot, int)
+                or not 1 <= slot <= MAX_LAYOUTS or slot in used_slots):
+            slot = next(
+                (candidate_slot for candidate_slot in range(1, MAX_LAYOUTS + 1)
+                 if candidate_slot not in used_slots),
+                index + 1,
+            )
+        used_slots.append(slot)
+        group_id = candidate.get("groupId", "")
+        if (not isinstance(group_id, str)
+                or (group_ids is not None and group_id not in group_ids)):
+            group_id = ""
+
         return {
             "name": name.strip() or f"Custom Layout {index + 1}",
             "x": x,
             "y": y,
             "width": width,
             "height": height,
+            "shortcutSlot": slot,
+            "groupId": group_id,
         }
+
+    @staticmethod
+    def _validated_custom_groups(candidate):
+        if isinstance(candidate, str):
+            try:
+                candidate = json.loads(candidate)
+            except json.JSONDecodeError:
+                candidate = []
+        if not isinstance(candidate, list):
+            return []
+        groups = []
+        used_ids = set()
+        for group in candidate:
+            if not isinstance(group, dict):
+                continue
+            group_id = group.get("id")
+            name = group.get("name")
+            if (not isinstance(group_id, str) or not group_id
+                    or group_id in used_ids or not isinstance(name, str)
+                    or not name.strip()):
+                continue
+            groups.append({"id": group_id, "name": name.strip()})
+            used_ids.add(group_id)
+        return groups
+
+    def load_custom_groups(self):
+        encoded = self._read_script_setting(
+            "Script-windowlayouts", CUSTOM_GROUPS_KEY, "[]"
+        )
+        return self._validated_custom_groups(encoded)
 
     def load(self):
         try:
@@ -110,9 +247,12 @@ class LayoutStorage:
         if not isinstance(candidates, list):
             return []
 
+        groups = self.load_custom_groups()
+        group_ids = {"", *(group["id"] for group in groups)}
         layouts = []
+        used_slots = []
         for index, candidate in enumerate(candidates[:MAX_LAYOUTS]):
-            layout = self._validated_layout(candidate, index)
+            layout = self._validated_layout(candidate, index, used_slots, group_ids)
             if layout is not None:
                 layouts.append(layout)
         return layouts
@@ -164,6 +304,44 @@ print(updated ? "updated" : "missing");"""
             pass
 
         self._reconfigure_kwin()
+        self._reload_cairo_dock()
+
+    def save_custom_groups(self, groups):
+        groups = self._validated_custom_groups(groups)
+        encoded = json.dumps(groups, separators=(",", ":"))
+        for group in (
+            "Script-windowlayouts",
+            "Script-windowlayoutsfloatingbutton",
+            "Script-windowlayoutsdragtargets",
+        ):
+            self._command_output([
+                "kwriteconfig6", "--file", "kwinrc", "--group", group,
+                "--key", CUSTOM_GROUPS_KEY, encoded,
+            ])
+        plasma_value = json.dumps(encoded)
+        script = f"""var updated = false;
+for (var panelIndex = 0; panelIndex < panelIds.length && !updated; panelIndex++) {{
+    var panel = panelById(panelIds[panelIndex]);
+    for (var widgetIndex = 0; widgetIndex < panel.widgetIds.length; widgetIndex++) {{
+        var widget = panel.widgetById(panel.widgetIds[widgetIndex]);
+        if (widget && widget.type === "org.example.windowlayouts") {{
+            widget.currentConfigGroup = ["General"];
+            widget.writeConfig("customGroups", {plasma_value});
+            updated = true;
+            break;
+        }}
+    }}
+}}
+print(updated ? "updated" : "missing");"""
+        try:
+            self._command_output([
+                "qdbus-qt6", "org.kde.plasmashell", "/PlasmaShell",
+                "org.kde.PlasmaShell.evaluateScript", script,
+            ])
+        except (OSError, subprocess.SubprocessError):
+            pass
+        self._reconfigure_kwin()
+        self._reload_cairo_dock()
 
     @classmethod
     def _read_plugin_enabled(cls, key):
@@ -196,6 +374,20 @@ print(updated ? "updated" : "missing");"""
             GROUP_ORDER_KEY,
             json.dumps(DEFAULT_GROUP_ORDER, separators=(",", ":")),
         ))
+        target_placement = self._read_script_setting(
+            DRAG_TARGETS_GROUP,
+            TARGET_PLACEMENT_KEY,
+            "zones",
+        )
+        if target_placement not in ("zones", "top"):
+            target_placement = "zones"
+        layout_padding = self._validated_layout_padding(
+            self._read_script_setting(
+                "Script-windowlayouts",
+                LAYOUT_PADDING_KEY,
+                "0",
+            )
+        )
         return {
             "floating_button_enabled": self._read_plugin_enabled(FLOATING_BUTTON_KEY),
             "drag_targets_enabled": self._read_plugin_enabled(DRAG_TARGETS_KEY),
@@ -204,9 +396,24 @@ print(updated ? "updated" : "missing");"""
                 SHOW_ALL_TARGETS_KEY,
                 "false",
             ).strip().lower() in ("1", "true", "yes", "on"),
+            "drag_target_placement": target_placement,
+            "show_all_top_drag_targets": self._read_script_setting(
+                DRAG_TARGETS_GROUP,
+                SHOW_ALL_TOP_TARGETS_KEY,
+                "false",
+            ).strip().lower() in ("1", "true", "yes", "on"),
             "floating_button_size": floating_button_size,
+            "layout_padding": layout_padding,
             "group_order": group_order,
         }
+
+    @staticmethod
+    def _validated_layout_padding(candidate):
+        try:
+            value = int(candidate)
+        except (TypeError, ValueError):
+            value = 0
+        return max(0, min(value, MAX_LAYOUT_PADDING))
 
     @staticmethod
     def _validated_group_order(candidate):
@@ -249,9 +456,27 @@ print(updated ? "updated" : "missing");"""
         floating_enabled = bool(settings.get("floating_button_enabled", False))
         drag_targets_enabled = bool(settings.get("drag_targets_enabled", False))
         show_all_drag_targets = bool(settings.get("show_all_drag_targets", False))
+        target_placement = str(settings.get("drag_target_placement", "zones"))
+        if target_placement not in ("zones", "top"):
+            target_placement = "zones"
+        show_all_top_drag_targets = bool(
+            settings.get("show_all_top_drag_targets", False)
+        )
         floating_button_size = str(settings.get("floating_button_size", "default"))
         if floating_button_size not in FLOATING_BUTTON_SIZES:
             floating_button_size = "default"
+        if "layout_padding" in settings:
+            layout_padding = self._validated_layout_padding(
+                settings.get("layout_padding")
+            )
+        else:
+            layout_padding = self._validated_layout_padding(
+                self._read_script_setting(
+                    "Script-windowlayouts",
+                    LAYOUT_PADDING_KEY,
+                    "0",
+                )
+            )
         group_order = self._validated_group_order(settings.get("group_order", []))
         group_order_json = json.dumps(group_order, separators=(",", ":"))
         for key, enabled in (
@@ -288,11 +513,46 @@ print(updated ? "updated" : "missing");"""
             "--file",
             "kwinrc",
             "--group",
+            DRAG_TARGETS_GROUP,
+            "--key",
+            TARGET_PLACEMENT_KEY,
+            target_placement,
+        ])
+        self._command_output([
+            "kwriteconfig6",
+            "--file",
+            "kwinrc",
+            "--group",
+            DRAG_TARGETS_GROUP,
+            "--key",
+            SHOW_ALL_TOP_TARGETS_KEY,
+            "--type",
+            "bool",
+            "true" if show_all_top_drag_targets else "false",
+        ])
+        self._command_output([
+            "kwriteconfig6",
+            "--file",
+            "kwinrc",
+            "--group",
             FLOATING_BUTTON_GROUP,
             "--key",
             FLOATING_BUTTON_SIZE_KEY,
             floating_button_size,
         ])
+        for group in ("Script-windowlayouts", DRAG_TARGETS_GROUP):
+            self._command_output([
+                "kwriteconfig6",
+                "--file",
+                "kwinrc",
+                "--group",
+                group,
+                "--key",
+                LAYOUT_PADDING_KEY,
+                "--type",
+                "int",
+                str(layout_padding),
+            ])
         for group in (
             "Script-windowlayouts",
             FLOATING_BUTTON_GROUP,
@@ -315,7 +575,10 @@ print(updated ? "updated" : "missing");"""
         floating_js = "true" if floating_enabled else "false"
         drag_targets_js = "true" if drag_targets_enabled else "false"
         show_all_js = "true" if show_all_drag_targets else "false"
+        target_placement_js = json.dumps(target_placement)
+        show_all_top_js = "true" if show_all_top_drag_targets else "false"
         floating_size_js = json.dumps(floating_button_size)
+        layout_padding_js = str(layout_padding)
         group_order_js = json.dumps(group_order_json)
         script = f"""var updated = false;
 for (var panelIndex = 0; panelIndex < panelIds.length && !updated; panelIndex++) {{
@@ -327,7 +590,10 @@ for (var panelIndex = 0; panelIndex < panelIds.length && !updated; panelIndex++)
             widget.writeConfig("floatingButtonEnabled", {floating_js});
             widget.writeConfig("dragTargetsEnabled", {drag_targets_js});
             widget.writeConfig("showAllDragTargets", {show_all_js});
+            widget.writeConfig("dragTargetPlacement", {target_placement_js});
+            widget.writeConfig("showAllTopDragTargets", {show_all_top_js});
             widget.writeConfig("floatingButtonSize", {floating_size_js});
+            widget.writeConfig("layoutPadding", {layout_padding_js});
             widget.writeConfig("groupOrder", {group_order_js});
             updated = true;
             break;
@@ -434,6 +700,180 @@ print(updated ? "updated" : "missing");"""
         except (OSError, subprocess.SubprocessError):
             pass
 
+    @classmethod
+    def _reload_cairo_dock(cls):
+        """Refresh a running Window Layouts sub-dock after shared saves."""
+        try:
+            cls._command_output([
+                "qdbus-qt6",
+                "org.cairodock.CairoDock",
+                "/org/cairodock/CairoDock",
+                "org.cairodock.CairoDock.Reload",
+                "module=window_layouts",
+            ])
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+class ShortcutStorage:
+    """Manage Window Layouts shortcuts through KDE's global-shortcut service."""
+
+    SET_PRESENT_AND_NO_AUTOLOADING = 2 | 4
+
+    def __init__(self):
+        bus = dbus.SessionBus()
+        proxy = bus.get_object("org.kde.kglobalaccel", "/kglobalaccel")
+        self.interface = dbus.Interface(proxy, "org.kde.KGlobalAccel")
+
+    @staticmethod
+    def action_friendly_name(action_id):
+        for unique_name, friendly_name, _label in FIXED_SHORTCUTS:
+            if unique_name == action_id:
+                return friendly_name
+        if action_id.startswith("WindowLayoutsCustom"):
+            suffix = action_id.removeprefix("WindowLayoutsCustom")
+            if suffix.isdigit() and 1 <= int(suffix) <= MAX_LAYOUTS:
+                return f"Window Layouts: Custom {suffix}"
+        return f"Window Layouts: {action_id}"
+
+    @classmethod
+    def action_identifier(cls, action_id):
+        return dbus.Array([
+            "kwin",
+            action_id,
+            "KWin",
+            cls.action_friendly_name(action_id),
+        ], signature="s")
+
+    @staticmethod
+    def shortcut_from_text(text):
+        text = str(text).strip()
+        if not text or text.lower() == "none":
+            return 0
+        parts = [part.strip() for part in text.split("+")]
+        if parts[-1] == "" and len(parts) > 1:
+            parts[-1] = "+"
+            while len(parts) > 2 and parts[-2] == "":
+                parts.pop(-2)
+        modifiers = 0
+        for part in parts[:-1]:
+            normalized = part.casefold()
+            if normalized in ("ctrl", "control"):
+                modifiers |= QT_CONTROL
+            elif normalized == "alt":
+                modifiers |= QT_ALT
+            elif normalized == "shift":
+                modifiers |= QT_SHIFT
+            elif normalized in ("meta", "super", "win", "windows"):
+                modifiers |= QT_META
+            else:
+                raise ValueError(f"Unsupported shortcut modifier: {part}")
+        key_name = parts[-1]
+        normalized_key = key_name.casefold().replace(" ", "")
+        if normalized_key in QT_NAMED_KEYS:
+            key = QT_NAMED_KEYS[normalized_key]
+        elif normalized_key.startswith("f") and normalized_key[1:].isdigit():
+            function_number = int(normalized_key[1:])
+            if not 1 <= function_number <= 35:
+                raise ValueError("Function key must be between F1 and F35")
+            key = 0x01000030 + function_number - 1
+        elif len(key_name) == 1:
+            key = ord(key_name.upper())
+        else:
+            raise ValueError(f"Unsupported shortcut key: {key_name}")
+        return modifiers | key
+
+    @staticmethod
+    def shortcut_to_text(combined):
+        combined = int(combined)
+        if not combined:
+            return ""
+        parts = []
+        if combined & QT_CONTROL:
+            parts.append("Ctrl")
+        if combined & QT_ALT:
+            parts.append("Alt")
+        if combined & QT_SHIFT:
+            parts.append("Shift")
+        if combined & QT_META:
+            parts.append("Meta")
+        key = combined & QT_KEY_MASK
+        if 0x01000030 <= key <= 0x01000052:
+            parts.append(f"F{key - 0x01000030 + 1}")
+        elif key in QT_KEY_NAMES:
+            parts.append(QT_KEY_NAMES[key])
+        elif 0x20 <= key <= 0x10FFFF:
+            parts.append(chr(key).upper())
+        else:
+            parts.append(f"0x{key:x}")
+        return "+".join(parts)
+
+    def shortcut(self, action_id):
+        keys = self.interface.shortcut(self.action_identifier(action_id))
+        return int(keys[0]) if keys else 0
+
+    def entries(self, layouts):
+        entries = [
+            {"actionId": action_id, "label": label, "shortcut": self.shortcut(action_id)}
+            for action_id, _friendly_name, label in FIXED_SHORTCUTS
+        ]
+        for index, layout in enumerate(layouts):
+            slot = layout.get("shortcutSlot", index + 1)
+            action_id = f"WindowLayoutsCustom{slot}"
+            entries.append({
+                "actionId": action_id,
+                "label": layout.get("name") or f"Custom Layout {index + 1}",
+                "shortcut": self.shortcut(action_id),
+            })
+        return entries
+
+    def conflicts(self, action_id, shortcut):
+        if not shortcut:
+            return []
+        conflicts = []
+        for info in self.interface.getGlobalShortcutsByKey(dbus.Int32(shortcut)):
+            if str(info[2]) == "kwin" and str(info[0]) == action_id:
+                continue
+            conflicts.append({
+                "uniqueName": str(info[0]),
+                "friendlyName": str(info[1]),
+                "componentUnique": str(info[2]),
+                "componentFriendly": str(info[3]),
+                "keys": [int(key) for key in info[6]],
+            })
+        return conflicts
+
+    def set_shortcut(self, action_id, shortcut, force=False):
+        shortcut = int(shortcut)
+        conflicts = self.conflicts(action_id, shortcut)
+        if conflicts and not force:
+            return {"changed": False, "conflicts": conflicts}
+        if force:
+            for conflict in conflicts:
+                remaining = [key for key in conflict["keys"] if key != shortcut]
+                conflict_id = dbus.Array([
+                    conflict["componentUnique"],
+                    conflict["uniqueName"],
+                    conflict["componentFriendly"],
+                    conflict["friendlyName"],
+                ], signature="s")
+                self.interface.setForeignShortcut(
+                    conflict_id,
+                    dbus.Array(remaining, signature="i"),
+                )
+        requested = dbus.Array([shortcut] if shortcut else [], signature="i")
+        assigned = self.interface.setShortcut(
+            self.action_identifier(action_id),
+            requested,
+            dbus.UInt32(self.SET_PRESENT_AND_NO_AUTOLOADING),
+        )
+        assigned_key = int(assigned[0]) if assigned else 0
+        return {
+            "changed": assigned_key == shortcut,
+            "conflicts": [],
+            "shortcut": assigned_key,
+        }
+
 
 class ConfiguratorService(dbus.service.Object):
     """Own one editor window and present it for every D-Bus request."""
@@ -441,12 +881,31 @@ class ConfiguratorService(dbus.service.Object):
     def __init__(self, bus_name):
         super().__init__(bus_name, OBJECT_PATH)
         self.storage = LayoutStorage()
+        self.shortcuts = ShortcutStorage()
         self.window = WindowLayoutsConfigurator(
             self.storage.load,
-            self.storage.save,
+            self._save_layouts,
             self.storage.load_feature_settings,
             self.storage.save_feature_settings,
+            self.storage.load_custom_groups,
+            self.storage.save_custom_groups,
+            lambda: self.shortcuts.entries(self.storage.load()),
+            self.shortcuts.set_shortcut,
         )
+
+    def _clear_unused_custom_shortcuts(self):
+        used_slots = {
+            layout.get("shortcutSlot") for layout in self.storage.load()
+        }
+        for slot in range(1, MAX_LAYOUTS + 1):
+            if slot not in used_slots:
+                self.shortcuts.set_shortcut(
+                    f"WindowLayoutsCustom{slot}", 0, True
+                )
+
+    def _save_layouts(self, layouts):
+        self.storage.save(layouts)
+        self._clear_unused_custom_shortcuts()
 
     @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="")
     def Show(self):
@@ -459,6 +918,32 @@ class ConfiguratorService(dbus.service.Object):
     @dbus.service.method(INTERFACE_NAME, in_signature="b", out_signature="")
     def SetFloatingButtonEnabled(self, enabled):
         GLib.idle_add(self._set_floating_button_enabled, bool(enabled))
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="s")
+    def GetShortcutsJson(self):
+        entries = self.shortcuts.entries(self.storage.load())
+        return json.dumps({
+            entry["actionId"]: self.shortcuts.shortcut_to_text(entry["shortcut"])
+            for entry in entries
+        }, separators=(",", ":"))
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="")
+    def ClearUnusedCustomShortcuts(self):
+        self._clear_unused_custom_shortcuts()
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="ssb", out_signature="s")
+    def SetShortcutText(self, action_id, shortcut_text, force):
+        try:
+            shortcut = self.shortcuts.shortcut_from_text(str(shortcut_text))
+            result = self.shortcuts.set_shortcut(
+                str(action_id), shortcut, bool(force)
+            )
+            result["text"] = self.shortcuts.shortcut_to_text(
+                result.get("shortcut", shortcut)
+            )
+        except (ValueError, dbus.DBusException) as error:
+            result = {"changed": False, "error": str(error)}
+        return json.dumps(result, separators=(",", ":"))
 
     @dbus.service.method(INTERFACE_NAME, in_signature="bbbss", out_signature="")
     def SetFeatureSettings(
@@ -476,6 +961,54 @@ class ConfiguratorService(dbus.service.Object):
             bool(show_all_drag_targets),
             str(floating_button_size),
             str(group_order),
+        )
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="bbsbbss", out_signature="")
+    def SetFeatureSettingsV2(
+        self,
+        floating_enabled,
+        drag_targets_enabled,
+        target_placement,
+        show_all_zone_targets,
+        show_all_top_targets,
+        floating_button_size,
+        group_order,
+    ):
+        """Save target placement without breaking pre-1.0 frontends."""
+        GLib.idle_add(
+            self._set_feature_settings_v2,
+            bool(floating_enabled),
+            bool(drag_targets_enabled),
+            str(target_placement),
+            bool(show_all_zone_targets),
+            bool(show_all_top_targets),
+            str(floating_button_size),
+            str(group_order),
+        )
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="bbsbbssi", out_signature="")
+    def SetFeatureSettingsV3(
+        self,
+        floating_enabled,
+        drag_targets_enabled,
+        target_placement,
+        show_all_zone_targets,
+        show_all_top_targets,
+        floating_button_size,
+        group_order,
+        layout_padding,
+    ):
+        """Save feature settings including edge-aware layout padding."""
+        GLib.idle_add(
+            self._set_feature_settings_v3,
+            bool(floating_enabled),
+            bool(drag_targets_enabled),
+            str(target_placement),
+            bool(show_all_zone_targets),
+            bool(show_all_top_targets),
+            str(floating_button_size),
+            str(group_order),
+            int(layout_padding),
         )
 
     def _show_window(self):
@@ -502,6 +1035,50 @@ class ConfiguratorService(dbus.service.Object):
             "show_all_drag_targets": show_all_drag_targets,
             "floating_button_size": floating_button_size,
             "group_order": group_order,
+        })
+        return GLib.SOURCE_REMOVE
+
+    def _set_feature_settings_v2(
+        self,
+        floating_enabled,
+        drag_targets_enabled,
+        target_placement,
+        show_all_zone_targets,
+        show_all_top_targets,
+        floating_button_size,
+        group_order,
+    ):
+        self.storage.save_feature_settings({
+            "floating_button_enabled": floating_enabled,
+            "drag_targets_enabled": drag_targets_enabled,
+            "drag_target_placement": target_placement,
+            "show_all_drag_targets": show_all_zone_targets,
+            "show_all_top_drag_targets": show_all_top_targets,
+            "floating_button_size": floating_button_size,
+            "group_order": group_order,
+        })
+        return GLib.SOURCE_REMOVE
+
+    def _set_feature_settings_v3(
+        self,
+        floating_enabled,
+        drag_targets_enabled,
+        target_placement,
+        show_all_zone_targets,
+        show_all_top_targets,
+        floating_button_size,
+        group_order,
+        layout_padding,
+    ):
+        self.storage.save_feature_settings({
+            "floating_button_enabled": floating_enabled,
+            "drag_targets_enabled": drag_targets_enabled,
+            "drag_target_placement": target_placement,
+            "show_all_drag_targets": show_all_zone_targets,
+            "show_all_top_drag_targets": show_all_top_targets,
+            "floating_button_size": floating_button_size,
+            "group_order": group_order,
+            "layout_padding": layout_padding,
         })
         return GLib.SOURCE_REMOVE
 

@@ -8,6 +8,9 @@
         <entry name="CustomLayouts" type="String">
             <default>[]</default>
         </entry>
+        <entry name="CustomGroups" type="String">
+            <default>[]</default>
+        </entry>
         <entry name="ButtonSize" type="String">
             <default>default</default>
         </entry>

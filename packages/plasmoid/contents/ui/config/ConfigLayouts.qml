@@ -18,14 +18,22 @@ KCM.SimpleKCM {
 
     property string cfg_customLayouts: "[]"
     property string cfg_customLayoutsDefault: "[]"
+    property string cfg_customGroups: "[]"
+    property string cfg_customGroupsDefault: "[]"
     property bool cfg_floatingButtonEnabled: false
     property bool cfg_floatingButtonEnabledDefault: false
     property bool cfg_dragTargetsEnabled: false
     property bool cfg_dragTargetsEnabledDefault: false
     property bool cfg_showAllDragTargets: false
     property bool cfg_showAllDragTargetsDefault: false
+    property string cfg_dragTargetPlacement: "zones"
+    property string cfg_dragTargetPlacementDefault: "zones"
+    property bool cfg_showAllTopDragTargets: false
+    property bool cfg_showAllTopDragTargetsDefault: false
     property string cfg_floatingButtonSize: "default"
     property string cfg_floatingButtonSizeDefault: "default"
+    property int cfg_layoutPadding: 0
+    property int cfg_layoutPaddingDefault: 0
     property string cfg_groupOrder: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"window\"]"
     property string cfg_groupOrderDefault: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"window\"]"
     readonly property var floatingButtonSizes: ["small", "default", "big", "extraBig"]
@@ -38,12 +46,14 @@ KCM.SimpleKCM {
     property bool initialized: false
     property bool loadingConfiguration: false
     property bool updatingConfiguration: false
+    property bool loadingCustomGroups: false
+    property bool updatingCustomGroups: false
     property bool loadingGroupOrder: false
     property bool updatingGroupOrder: false
     property int selectedGroupIndex: 0
 
     implicitWidth: Kirigami.Units.gridUnit * 43
-    implicitHeight: Kirigami.Units.gridUnit * 44
+    implicitHeight: Kirigami.Units.gridUnit * 49
 
     function floatingButtonSizeIndex() {
         const index = floatingButtonSizes.indexOf(cfg_floatingButtonSize);
@@ -162,6 +172,151 @@ KCM.SimpleKCM {
             && candidate.y + candidate.height <= 1.000001;
     }
 
+    function customGroupName(groupId) {
+        if (!groupId) {
+            return i18n("Unassigned");
+        }
+        for (let index = 0; index < customGroupModel.count; index += 1) {
+            const group = customGroupModel.get(index);
+            if (group.groupId === groupId) {
+                return group.groupName;
+            }
+        }
+        return i18n("Unassigned");
+    }
+
+    function appendSavedLayoutGroup(groupId, groupName) {
+        let headingAdded = false;
+        for (let index = 0; index < customLayoutModel.count; index += 1) {
+            const layout = customLayoutModel.get(index);
+            if (layout.customGroupId !== groupId) {
+                continue;
+            }
+            if (!headingAdded) {
+                savedLayoutModel.append({
+                    rowKind: "heading",
+                    rowLabel: groupName,
+                    layoutIndex: -1,
+                });
+                headingAdded = true;
+            }
+            savedLayoutModel.append({
+                rowKind: "layout",
+                rowLabel: layout.layoutName,
+                layoutIndex: index,
+            });
+        }
+    }
+
+    function rebuildSavedLayoutModel() {
+        savedLayoutModel.clear();
+        // Preserve the user's custom-group order. Unassigned layouts are kept
+        // together at the end so group membership is visible at a glance.
+        for (let index = 0; index < customGroupModel.count; index += 1) {
+            const group = customGroupModel.get(index);
+            appendSavedLayoutGroup(group.groupId, group.groupName);
+        }
+        appendSavedLayoutGroup("", i18n("Unassigned"));
+    }
+
+    function adjacentLayoutIndex(offset) {
+        if (selectedIndex < 0 || selectedIndex >= customLayoutModel.count) {
+            return -1;
+        }
+        const groupId = customLayoutModel.get(selectedIndex).customGroupId;
+        for (let index = selectedIndex + offset;
+                index >= 0 && index < customLayoutModel.count;
+                index += offset) {
+            if (customLayoutModel.get(index).customGroupId === groupId) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    function canMoveSelectedLayout(offset) {
+        const revision = modelRevision;
+        return adjacentLayoutIndex(offset) >= 0;
+    }
+
+    function validCustomGroupId(groupId) {
+        if (!groupId) {
+            return "";
+        }
+        for (let index = 0; index < customGroupModel.count; index += 1) {
+            if (customGroupModel.get(index).groupId === groupId) {
+                return groupId;
+            }
+        }
+        return "";
+    }
+
+    function rebuildCustomGroupChoices() {
+        customGroupChoiceModel.clear();
+        customGroupChoiceModel.append({ groupId: "", groupName: i18n("Unassigned") });
+        for (let index = 0; index < customGroupModel.count; index += 1) {
+            const group = customGroupModel.get(index);
+            customGroupChoiceModel.append({ groupId: group.groupId, groupName: group.groupName });
+        }
+        updateGroupEditor();
+    }
+
+    function loadCustomGroups() {
+        loadingCustomGroups = true;
+        customGroupModel.clear();
+        let parsed = [];
+        try {
+            const candidate = JSON.parse(cfg_customGroups || "[]");
+            if (Array.isArray(candidate)) {
+                parsed = candidate;
+            }
+        } catch (error) {
+            parsed = [];
+        }
+        const usedIds = [];
+        for (let index = 0; index < parsed.length; index += 1) {
+            const group = parsed[index];
+            if (group
+                    && typeof group.id === "string"
+                    && group.id.length > 0
+                    && usedIds.indexOf(group.id) < 0
+                    && typeof group.name === "string"
+                    && group.name.trim().length > 0) {
+                customGroupModel.append({ groupId: group.id, groupName: group.name.trim() });
+                usedIds.push(group.id);
+            }
+        }
+        loadingCustomGroups = false;
+        rebuildCustomGroupChoices();
+    }
+
+    function storeCustomGroups() {
+        if (!initialized || loadingCustomGroups) {
+            return;
+        }
+        const groups = [];
+        for (let index = 0; index < customGroupModel.count; index += 1) {
+            const group = customGroupModel.get(index);
+            groups.push({ id: group.groupId, name: group.groupName });
+        }
+        updatingCustomGroups = true;
+        cfg_customGroups = JSON.stringify(groups);
+        updatingCustomGroups = false;
+    }
+
+    function nextShortcutSlot() {
+        const used = [];
+        for (let index = 0; index < customLayoutModel.count; index += 1) {
+            used.push(customLayoutModel.get(index).shortcutSlot);
+        }
+        for (let slot = 1; slot <= 20; slot += 1) {
+            if (used.indexOf(slot) < 0) {
+                return slot;
+            }
+        }
+        return 1;
+    }
+
     function loadLayouts() {
         loadingConfiguration = true;
         customLayoutModel.clear();
@@ -176,6 +331,7 @@ KCM.SimpleKCM {
             parsed = [];
         }
 
+        const usedSlots = [];
         for (let index = 0; index < Math.min(parsed.length, 20); index += 1) {
             const layout = parsed[index];
             if (!validStoredLayout(layout)) {
@@ -187,18 +343,36 @@ KCM.SimpleKCM {
             const columnSpan = Math.max(1, Math.min(gridColumns - column, Math.round(layout.width * gridColumns)));
             const rowSpan = Math.max(1, Math.min(gridRows - row, Math.round(layout.height * gridRows)));
 
+            let shortcutSlot = Number.isInteger(layout.shortcutSlot)
+                && layout.shortcutSlot >= 1
+                && layout.shortcutSlot <= 20
+                && usedSlots.indexOf(layout.shortcutSlot) < 0
+                    ? layout.shortcutSlot
+                    : -1;
+            if (shortcutSlot < 0) {
+                for (let slot = 1; slot <= 20; slot += 1) {
+                    if (usedSlots.indexOf(slot) < 0) {
+                        shortcutSlot = slot;
+                        break;
+                    }
+                }
+            }
+            usedSlots.push(shortcutSlot);
             customLayoutModel.append({
                 layoutName: layout.name.trim() || i18n("Custom Layout %1", index + 1),
                 column,
                 row,
                 columnSpan,
                 rowSpan,
+                shortcutSlot,
+                customGroupId: validCustomGroupId(layout.groupId),
             });
         }
 
         selectedIndex = customLayoutModel.count > 0 ? 0 : -1;
         modelRevision += 1;
         loadingConfiguration = false;
+        rebuildSavedLayoutModel();
         updateNameEditor();
     }
 
@@ -216,6 +390,8 @@ KCM.SimpleKCM {
                 y: roundedFraction(layout.row, gridRows),
                 width: roundedFraction(layout.columnSpan, gridColumns),
                 height: roundedFraction(layout.rowSpan, gridRows),
+                shortcutSlot: layout.shortcutSlot,
+                groupId: layout.customGroupId,
             });
         }
 
@@ -229,9 +405,26 @@ KCM.SimpleKCM {
         nameEditor.text = layout ? layout.layoutName : "";
     }
 
+    function updateGroupEditor() {
+        if (!groupEditor) {
+            return;
+        }
+        const layout = selectedLayout();
+        const groupId = layout ? layout.customGroupId : "";
+        let selected = 0;
+        for (let index = 0; index < customGroupChoiceModel.count; index += 1) {
+            if (customGroupChoiceModel.get(index).groupId === groupId) {
+                selected = index;
+                break;
+            }
+        }
+        groupEditor.currentIndex = selected;
+    }
+
     function chooseLayout(index) {
         selectedIndex = index;
         updateNameEditor();
+        updateGroupEditor();
     }
 
     function addLayout() {
@@ -245,8 +438,11 @@ KCM.SimpleKCM {
             row: 0,
             columnSpan: Math.round(gridColumns / 2),
             rowSpan: Math.round(gridRows / 2),
+            shortcutSlot: nextShortcutSlot(),
+            customGroupId: "",
         });
         modelRevision += 1;
+        rebuildSavedLayoutModel();
         chooseLayout(customLayoutModel.count - 1);
         storeLayouts();
     }
@@ -262,7 +458,9 @@ KCM.SimpleKCM {
             ? -1
             : Math.min(removedIndex, customLayoutModel.count - 1);
         modelRevision += 1;
+        rebuildSavedLayoutModel();
         updateNameEditor();
+        updateGroupEditor();
         storeLayouts();
     }
 
@@ -271,15 +469,17 @@ KCM.SimpleKCM {
             return;
         }
 
-        const targetIndex = selectedIndex + offset;
-        if (targetIndex < 0 || targetIndex >= customLayoutModel.count) {
+        const targetIndex = adjacentLayoutIndex(offset);
+        if (targetIndex < 0) {
             return;
         }
 
         customLayoutModel.move(selectedIndex, targetIndex, 1);
         selectedIndex = targetIndex;
         modelRevision += 1;
+        rebuildSavedLayoutModel();
         updateNameEditor();
+        updateGroupEditor();
         storeLayouts();
     }
 
@@ -299,8 +499,76 @@ KCM.SimpleKCM {
         modelRevision += 1;
     }
 
+    function createCustomGroup(name) {
+        const trimmedName = name.trim();
+        if (!trimmedName) {
+            return;
+        }
+        const groupId = `group-${Date.now().toString(36)}-${customGroupModel.count + 1}`;
+        customGroupModel.append({ groupId, groupName: trimmedName });
+        storeCustomGroups();
+        rebuildCustomGroupChoices();
+        if (selectedIndex >= 0) {
+            customLayoutModel.setProperty(selectedIndex, "customGroupId", groupId);
+            modelRevision += 1;
+            rebuildSavedLayoutModel();
+            updateGroupEditor();
+            storeLayouts();
+        }
+    }
+
+    function renameCurrentCustomGroup(name) {
+        const choice = groupEditor.currentIndex >= 0
+            ? customGroupChoiceModel.get(groupEditor.currentIndex)
+            : null;
+        const trimmedName = name.trim();
+        if (!choice || !choice.groupId || !trimmedName) {
+            return;
+        }
+        for (let index = 0; index < customGroupModel.count; index += 1) {
+            if (customGroupModel.get(index).groupId === choice.groupId) {
+                customGroupModel.setProperty(index, "groupName", trimmedName);
+                break;
+            }
+        }
+        storeCustomGroups();
+        rebuildCustomGroupChoices();
+        rebuildSavedLayoutModel();
+    }
+
+    function removeCurrentCustomGroup() {
+        const choice = groupEditor.currentIndex >= 0
+            ? customGroupChoiceModel.get(groupEditor.currentIndex)
+            : null;
+        if (!choice || !choice.groupId) {
+            return;
+        }
+        for (let index = customGroupModel.count - 1; index >= 0; index -= 1) {
+            if (customGroupModel.get(index).groupId === choice.groupId) {
+                customGroupModel.remove(index);
+            }
+        }
+        for (let index = 0; index < customLayoutModel.count; index += 1) {
+            if (customLayoutModel.get(index).customGroupId === choice.groupId) {
+                customLayoutModel.setProperty(index, "customGroupId", "");
+            }
+        }
+        modelRevision += 1;
+        storeCustomGroups();
+        rebuildCustomGroupChoices();
+        rebuildSavedLayoutModel();
+        storeLayouts();
+    }
+
     onCfg_customLayoutsChanged: {
         if (initialized && !updatingConfiguration) {
+            loadLayouts();
+        }
+    }
+
+    onCfg_customGroupsChanged: {
+        if (initialized && !updatingCustomGroups) {
+            loadCustomGroups();
             loadLayouts();
         }
     }
@@ -313,6 +581,7 @@ KCM.SimpleKCM {
 
     Component.onCompleted: {
         initialized = true;
+        loadCustomGroups();
         loadLayouts();
         loadGroupOrder();
         Qt.callLater(page.updateConfigurationWindowTitle);
@@ -323,7 +592,19 @@ KCM.SimpleKCM {
     }
 
     ListModel {
+        id: savedLayoutModel
+    }
+
+    ListModel {
         id: groupOrderModel
+    }
+
+    ListModel {
+        id: customGroupModel
+    }
+
+    ListModel {
+        id: customGroupChoiceModel
     }
 
     ColumnLayout {
@@ -354,17 +635,56 @@ KCM.SimpleKCM {
                 ListView {
                     anchors.fill: parent
                     clip: true
-                    model: customLayoutModel
-                    spacing: Kirigami.Units.smallSpacing
+                    model: savedLayoutModel
 
-                    delegate: QQC2.ItemDelegate {
+                    delegate: Item {
                         required property int index
-                        required property string layoutName
+                        required property string rowKind
+                        required property string rowLabel
+                        required property int layoutIndex
+
+                        readonly property bool isLastLayoutInGroup:
+                            rowKind === "layout"
+                            && (index + 1 >= savedLayoutModel.count
+                                || savedLayoutModel.get(index + 1).rowKind === "heading")
+                        readonly property int layoutRowHeight:
+                            Math.round(Kirigami.Units.gridUnit * 1.45)
 
                         width: ListView.view.width
-                        text: layoutName
-                        highlighted: page.selectedIndex === index
-                        onClicked: page.chooseLayout(index)
+                        height: rowKind === "heading"
+                            ? groupHeading.implicitHeight + Kirigami.Units.smallSpacing
+                            : layoutRowHeight
+                                + (isLastLayoutInGroup
+                                    ? Kirigami.Units.largeSpacing
+                                    : 0)
+
+                        QQC2.Label {
+                            id: groupHeading
+
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: parent.rowKind === "heading"
+                            text: parent.rowLabel
+                            font.bold: true
+                            font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
+                            color: Kirigami.Theme.textColor
+                            elide: Text.ElideRight
+                        }
+
+                        QQC2.ItemDelegate {
+                            id: layoutDelegate
+
+                            anchors.top: parent.top
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            height: parent.layoutRowHeight
+                            visible: parent.rowKind === "layout"
+                            leftPadding: Kirigami.Units.largeSpacing
+                            text: parent.rowLabel
+                            highlighted: page.selectedIndex === parent.layoutIndex
+                            onClicked: page.chooseLayout(parent.layoutIndex)
+                        }
                     }
 
                     QQC2.Label {
@@ -408,7 +728,7 @@ KCM.SimpleKCM {
                     Layout.fillWidth: true
                     text: i18n("Move Up")
                     icon.name: "go-up"
-                    enabled: page.selectedIndex > 0
+                    enabled: page.canMoveSelectedLayout(-1)
                     onClicked: page.moveSelectedLayout(-1)
                 }
 
@@ -416,8 +736,7 @@ KCM.SimpleKCM {
                     Layout.fillWidth: true
                     text: i18n("Move Down")
                     icon.name: "go-down"
-                    enabled: page.selectedIndex >= 0
-                        && page.selectedIndex < customLayoutModel.count - 1
+                    enabled: page.canMoveSelectedLayout(1)
                     onClicked: page.moveSelectedLayout(1)
                 }
             }
@@ -452,8 +771,78 @@ KCM.SimpleKCM {
                     if (page.selectedIndex >= 0) {
                         customLayoutModel.setProperty(page.selectedIndex, "layoutName", text);
                         page.modelRevision += 1;
+                        page.rebuildSavedLayoutModel();
                         page.storeLayouts();
                     }
+                }
+            }
+
+            QQC2.Label {
+                text: i18n("Custom group")
+                font.bold: true
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                QQC2.ComboBox {
+                    id: groupEditor
+
+                    Layout.fillWidth: true
+                    enabled: page.selectedIndex >= 0
+                    model: customGroupChoiceModel
+                    textRole: "groupName"
+                    valueRole: "groupId"
+
+                    onActivated: function(index) {
+                        if (page.selectedIndex >= 0 && index >= 0) {
+                            customLayoutModel.setProperty(
+                                page.selectedIndex,
+                                "customGroupId",
+                                customGroupChoiceModel.get(index).groupId,
+                            );
+                            page.modelRevision += 1;
+                            page.rebuildSavedLayoutModel();
+                            page.storeLayouts();
+                        }
+                    }
+                }
+
+                QQC2.Button {
+                    icon.name: "list-add"
+                    display: QQC2.AbstractButton.IconOnly
+                    text: i18n("Create group")
+                    QQC2.ToolTip.text: text
+                    QQC2.ToolTip.visible: hovered
+                    onClicked: {
+                        newGroupName.text = "";
+                        newGroupDialog.open();
+                        newGroupName.forceActiveFocus();
+                    }
+                }
+
+                QQC2.Button {
+                    icon.name: "document-edit"
+                    display: QQC2.AbstractButton.IconOnly
+                    text: i18n("Rename group")
+                    enabled: groupEditor.currentIndex > 0
+                    QQC2.ToolTip.text: text
+                    QQC2.ToolTip.visible: hovered
+                    onClicked: {
+                        renameGroupName.text = groupEditor.currentText;
+                        renameGroupDialog.open();
+                        renameGroupName.forceActiveFocus();
+                    }
+                }
+
+                QQC2.Button {
+                    icon.name: "edit-delete"
+                    display: QQC2.AbstractButton.IconOnly
+                    text: i18n("Remove group")
+                    enabled: groupEditor.currentIndex > 0
+                    QQC2.ToolTip.text: text
+                    QQC2.ToolTip.visible: hovered
+                    onClicked: page.removeCurrentCustomGroup()
                 }
             }
 
@@ -586,7 +975,7 @@ KCM.SimpleKCM {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 11
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 18
             spacing: Kirigami.Units.largeSpacing
 
             QQC2.GroupBox {
@@ -650,6 +1039,23 @@ KCM.SimpleKCM {
                 anchors.fill: parent
                 spacing: Kirigami.Units.smallSpacing
 
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: i18n("Layout padding (pixels)")
+                    }
+
+                    QQC2.SpinBox {
+                        from: 0
+                        to: 200
+                        editable: true
+                        value: page.cfg_layoutPadding
+                        onValueModified: page.cfg_layoutPadding = value
+                    }
+                }
+
                 QQC2.Switch {
                     Layout.fillWidth: true
                     text: i18n("Show floating button beside the active window")
@@ -683,16 +1089,101 @@ KCM.SimpleKCM {
                     onToggled: page.cfg_dragTargetsEnabled = checked
                 }
 
-                QQC2.Switch {
+                QQC2.ButtonGroup {
+                    id: targetPlacementGroup
+                }
+
+                QQC2.RadioButton {
                     Layout.fillWidth: true
                     Layout.leftMargin: Kirigami.Units.gridUnit
-                    text: i18n("Show all layout targets immediately")
+                    text: i18n("Layout targets at the center of each layout zone")
                     enabled: page.cfg_dragTargetsEnabled
+                    checked: page.cfg_dragTargetPlacement === "zones"
+                    QQC2.ButtonGroup.group: targetPlacementGroup
+                    onToggled: {
+                        if (checked) {
+                            page.cfg_dragTargetPlacement = "zones";
+                        }
+                    }
+                }
+
+                QQC2.Switch {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Kirigami.Units.gridUnit * 2
+                    text: i18n("Display zone targets immediately")
+                    enabled: page.cfg_dragTargetsEnabled
+                        && page.cfg_dragTargetPlacement === "zones"
                     checked: page.cfg_showAllDragTargets
                     onToggled: page.cfg_showAllDragTargets = checked
                 }
+
+                QQC2.RadioButton {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Kirigami.Units.gridUnit
+                    text: i18n("Layout targets in a top-center strip")
+                    enabled: page.cfg_dragTargetsEnabled
+                    checked: page.cfg_dragTargetPlacement === "top"
+                    QQC2.ButtonGroup.group: targetPlacementGroup
+                    onToggled: {
+                        if (checked) {
+                            page.cfg_dragTargetPlacement = "top";
+                        }
+                    }
+                }
+
+                QQC2.Switch {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Kirigami.Units.gridUnit * 2
+                    text: i18n("Display the top-center strip immediately")
+                    enabled: page.cfg_dragTargetsEnabled
+                        && page.cfg_dragTargetPlacement === "top"
+                    checked: page.cfg_showAllTopDragTargets
+                    onToggled: page.cfg_showAllTopDragTargets = checked
+                }
             }
         }
+        }
+    }
+
+    QQC2.Dialog {
+        id: newGroupDialog
+
+        anchors.centerIn: parent
+        width: Math.min(
+            page.width - Kirigami.Units.gridUnit * 2,
+            Kirigami.Units.gridUnit * 26
+        )
+        title: i18n("Create Custom Group")
+        modal: true
+        standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
+        onAccepted: page.createCustomGroup(newGroupName.text)
+
+        QQC2.TextField {
+            id: newGroupName
+            width: newGroupDialog.availableWidth
+            placeholderText: i18n("Group name")
+            maximumLength: 80
+        }
+    }
+
+    QQC2.Dialog {
+        id: renameGroupDialog
+
+        anchors.centerIn: parent
+        width: Math.min(
+            page.width - Kirigami.Units.gridUnit * 2,
+            Kirigami.Units.gridUnit * 26
+        )
+        title: i18n("Rename Custom Group")
+        modal: true
+        standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
+        onAccepted: page.renameCurrentCustomGroup(renameGroupName.text)
+
+        QQC2.TextField {
+            id: renameGroupName
+            width: renameGroupDialog.availableWidth
+            placeholderText: i18n("Group name")
+            maximumLength: 80
         }
     }
 }

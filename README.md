@@ -1,6 +1,9 @@
 # Window Layouts for KDE Plasma
 
-Window Layouts is a window-positioning/tiling application inspired by Magnet (on MacOS) for **KDE Plasma 6 on Wayland**. It provides an extensive amount of customisation for organising windows on your desktop -- gives you named layouts for the focused (active) window including the familiar halves and quarters as well as the ability to customise up to 20 layouts that adapt to each monitor's usable area.
+Window Layouts is a window-positioning and tiling utility inspired by Magnet
+for **KDE Plasma 6 on Wayland**. It provides named layouts for the focused
+window, including familiar halves, quarters, and thirds, together with up to 20
+custom layouts that adapt to each monitor's usable area.
 
 The project is designed for a native Wayland Plasma session: KWin moves the
 application window itself, so it does not inject buttons into application title
@@ -11,18 +14,31 @@ bars or rely on X11 window-management tools.
 - Fixed halves, quarters, thirds, two-thirds, maximize, center, and restore
   layouts.
 - Up to 20 named custom layouts, selected on a 24 × 12 visual grid.
+- Named custom-layout groups for organizing related layouts.
 - A panel widget, a floating button beside the focused window, and an optional
   Cairo-Dock sub-dock that all invoke the same KWin actions.
 - Move the focused window to the next or previous monitor and workspace, with
-  wrap-around. Commands are unavailable when there is nowhere to move.
-- Optional on-screen layout targets while dragging a window, with either
-  proximity-based or immediate display of all targets.
+  wrap-around. Cross-monitor moves preserve proportional placement and rescale
+  the window for different resolutions, display scaling, panels, and usable
+  areas. Commands are unavailable when there is nowhere to move.
+- Optional layout padding from 0 to 200 pixels. Monitor-edge layout boundaries
+  remain flush while internal edges are inset by the chosen amount.
+- Optional on-screen layout targets while dragging a window. Targets can appear
+  at the center of matching layout zones or together in a top-center strip,
+  with proximity-based or immediate display for either mode.
+- Global keyboard shortcuts for every layout and for previous/next workspace
+  and monitor movement, with KDE conflict detection and an explicit warning
+  before an existing shortcut is reassigned.
+- Named groups within the custom layouts, useful for keeping related layouts
+  together without changing their geometry.
 - Reorder layout groups: Halves, Quarters, Thirds, Two Thirds, Custom, and
   Window.
 - Per-window Restore geometry, so a laid-out window can return to its previous
   size and position.
 - Settings shared between the panel, floating button, Cairo-Dock, and the
   configuration windows.
+
+Version **1.0.0** is the first stable release of Window Layouts.
 
 ## Screenshots
 
@@ -109,21 +125,34 @@ it to the desktop instead of a panel.
 
 ## Configure Window Layouts
 
-Click the Window Layouts panel icon and choose **Configure…** to open up the configuration window. The same shared configuration window is also available from the Cairo-Dock applet and the floating-button menu.
+Click the Window Layouts panel icon and choose **Configure…** to open the
+configuration window. The same shared configuration window is also available
+from the Cairo-Dock applet and the floating-button menu.
 
 Use it to:
 
 1. Add, name, remove, and reorder up to 20 custom layouts.
 2. Drag across the 24 × 12 grid to set a custom layout's proportional position
    and size.
-3. Reorder the layout groups shown by the menus and drag targets.
-4. Enable or disable the floating button and on-screen drag targets.
-5. Choose whether drag targets appear near the matching screen region or all
-   appear immediately.
-6. Choose the floating-button size: Small, Default, Big, or Extra big.
+3. Create, rename, and remove named custom groups, then assign custom layouts
+   to them. The Saved layouts list displays group headings and keeps
+   unassigned layouts together.
+4. Reorder the built-in layout groups shown by the menus and drag targets.
+5. Enable or disable the floating button and on-screen drag targets.
+6. Choose whether drag targets appear at their matching layout zones or in a
+   top-center strip, and whether the selected target style appears immediately.
+7. Choose the floating-button size: Small, Default, Big, or Extra big.
+8. Set optional layout padding in pixels. Padding is applied only to layout
+   edges that do not touch the monitor's usable boundary.
+9. Assign or remove a global shortcut for every fixed and custom layout, or
+   for moving a window to the previous/next workspace or monitor, from
+   **Layout Shortcuts**. KDE identifies conflicts and asks before reassigning
+   a shortcut owned by another action.
 
-Choose **Apply** to apply the setting changes and keep editing, **OK** to apply the setting changes and close the configuration window, or **Cancel** to discard unapplied changes. Custom layouts are proportional to each display's usable area, so they remain useful across different resolutions and panel
-configurations.
+Choose **Apply** to save changes and keep editing, **OK** to save changes and
+close the configuration window, or **Cancel** to discard unapplied changes.
+Custom layouts are proportional to each display's usable area, so they remain
+useful across different resolutions, scaling factors, and panel configurations.
 
 ## Using Window Layouts
 
@@ -131,7 +160,18 @@ configurations.
 
 Click the panel icon, then choose a layout for the focused application window.
 The menu also provides Restore, workspace movement, monitor movement, and
-Configure options. Monitor and workspace movement wraps at each end of the available list.
+Configure options. Monitor and workspace movement wraps at each end of the
+available list. Monitor movement preserves the window's normalized layout or
+free-form geometry, so it scales to the destination display's resolution,
+scaling factor, and usable area.
+
+### Keyboard shortcuts
+
+Open **Configure… → Layout Shortcuts** to assign or remove a global shortcut
+for any fixed or custom layout. The same page includes actions for moving the
+focused window to the previous or next workspace or monitor. If a proposed
+shortcut is already in use, KDE identifies the conflict and Window Layouts asks
+for confirmation before reassigning it.
 
 ### Floating button
 
@@ -152,10 +192,12 @@ keyboard shortcut.
 
 ### On-screen drag layouts
 
-When enabled, start moving a normal window with the mouse. Layout targets are
-shown either when the pointer approaches a layout region or immediately,
-depending on your configuration. Hovering a target previews the destination;
-release the mouse over it to apply that layout.
+When enabled, start moving a normal window with the mouse. In the default zone
+mode, targets appear when the pointer approaches a layout region. In top-center
+mode, moving near the top-center trigger reveals a compact strip containing all
+layouts. Either mode can instead display its targets immediately. Hovering a
+target previews the destination; release the mouse over it to apply that
+layout.
 
 ### Cairo-Dock frontend
 
@@ -171,8 +213,10 @@ refreshes when monitors or workspaces change, and monitor entries are visibly
 unavailable when only one monitor is connected.
 
 The installer adds a small user-session guard to keep Cairo-Dock on KDE's
-primary output after display changes and unlocks. It works with Cairo-Dock's
-existing autostart service and does not start a duplicate dock.
+primary output after display changes and unlocks. It first asks an existing
+dock to reveal itself and only restarts Cairo-Dock after an output-topology
+change or when the dock is unavailable. It works with Cairo-Dock's existing
+autostart service and does not start a duplicate dock.
 
 ## Updating and uninstalling
 
@@ -183,12 +227,12 @@ source changes, run:
 ./install-drag-overlay.sh
 ```
 
-This upgrades those packages while preserving the
-floating-button, drag-target, size, and group-order settings already selected.
+This upgrades the core action script and UI packages while preserving custom
+layouts, custom groups, shortcuts, floating-button, drag-target, size, target
+placement, and group-order settings already selected.
 
-For changes to the core JavaScript KWin action script, run `./install.sh`.
-That script is a clean core install and intentionally resets the optional
-floating-button and drag-target settings to their safe defaults.
+`install.sh` remains the clean first-install path and intentionally resets the
+optional floating-button and drag-target settings to their safe defaults.
 
 To remove the core components and panel widget:
 
@@ -238,6 +282,9 @@ Thank you so much!
 
 For the component map, persisted settings, important functions, and extension
 notes, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+Release history is recorded in [CHANGELOG.md](CHANGELOG.md). The current
+release number is also available in [VERSION](VERSION).
 
 ## License
 

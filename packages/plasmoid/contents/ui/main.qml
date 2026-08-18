@@ -21,10 +21,14 @@ PlasmoidItem {
 
     property string lastError: ""
     property string configuredLayoutsJson: Plasmoid.configuration.customLayouts || "[]"
+    property string configuredCustomGroupsJson: Plasmoid.configuration.customGroups || "[]"
     property bool configuredFloatingButtonEnabled: Plasmoid.configuration.floatingButtonEnabled
     property bool configuredDragTargetsEnabled: Plasmoid.configuration.dragTargetsEnabled
     property bool configuredShowAllDragTargets: Plasmoid.configuration.showAllDragTargets
+    property string configuredDragTargetPlacement: Plasmoid.configuration.dragTargetPlacement || "zones"
+    property bool configuredShowAllTopDragTargets: Plasmoid.configuration.showAllTopDragTargets
     property string configuredFloatingButtonSize: Plasmoid.configuration.floatingButtonSize || "default"
+    property int configuredLayoutPadding: Plasmoid.configuration.layoutPadding || 0
     property string configuredGroupOrderJson: Plasmoid.configuration.groupOrder
         || "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"window\"]"
     property bool componentReady: false
@@ -139,18 +143,87 @@ PlasmoidItem {
             return [];
         }
 
-        return parsed.slice(0, 20).filter(candidate => candidate
-            && typeof candidate.name === "string"
-            && Number.isFinite(candidate.x)
-            && Number.isFinite(candidate.y)
-            && Number.isFinite(candidate.width)
-            && Number.isFinite(candidate.height)
-            && candidate.x >= 0
-            && candidate.y >= 0
-            && candidate.width > 0
-            && candidate.height > 0
-            && candidate.x + candidate.width <= 1.000001
-            && candidate.y + candidate.height <= 1.000001);
+        const layouts = [];
+        const usedSlots = [];
+        const candidates = parsed.slice(0, 20);
+        for (let index = 0; index < candidates.length; index += 1) {
+            const candidate = candidates[index];
+            if (!candidate
+                    || typeof candidate.name !== "string"
+                    || !Number.isFinite(candidate.x)
+                    || !Number.isFinite(candidate.y)
+                    || !Number.isFinite(candidate.width)
+                    || !Number.isFinite(candidate.height)
+                    || candidate.x < 0
+                    || candidate.y < 0
+                    || candidate.width <= 0
+                    || candidate.height <= 0
+                    || candidate.x + candidate.width > 1.000001
+                    || candidate.y + candidate.height > 1.000001) {
+                continue;
+            }
+            let shortcutSlot = Number.isInteger(candidate.shortcutSlot)
+                && candidate.shortcutSlot >= 1
+                && candidate.shortcutSlot <= 20
+                && usedSlots.indexOf(candidate.shortcutSlot) < 0
+                    ? candidate.shortcutSlot
+                    : -1;
+            if (shortcutSlot < 0) {
+                for (let slot = 1; slot <= 20; slot += 1) {
+                    if (usedSlots.indexOf(slot) < 0) {
+                        shortcutSlot = slot;
+                        break;
+                    }
+                }
+            }
+            usedSlots.push(shortcutSlot);
+            layouts.push({
+                name: candidate.name,
+                x: candidate.x,
+                y: candidate.y,
+                width: candidate.width,
+                height: candidate.height,
+                shortcutSlot,
+                groupId: typeof candidate.groupId === "string" ? candidate.groupId : "",
+            });
+        }
+        return layouts;
+    }
+
+    function parsedCustomGroups() {
+        let parsed = [];
+        try {
+            const candidate = JSON.parse(configuredCustomGroupsJson);
+            if (Array.isArray(candidate)) {
+                parsed = candidate;
+            }
+        } catch (error) {
+            parsed = [];
+        }
+        const groups = {};
+        parsed.forEach(group => {
+            if (group
+                    && typeof group.id === "string"
+                    && group.id.length > 0
+                    && typeof group.name === "string"
+                    && group.name.trim().length > 0
+                    && groups[group.id] === undefined) {
+                groups[group.id] = group.name.trim();
+            }
+        });
+        return groups;
+    }
+
+    function customLayoutsInGroupOrder(layouts, groups) {
+        const ordered = layouts.filter(layout => !groups[layout.groupId]);
+        Object.keys(groups).forEach(groupId => {
+            layouts.forEach(layout => {
+                if (layout.groupId === groupId) {
+                    ordered.push(layout);
+                }
+            });
+        });
+        return ordered;
     }
 
     function rebuildMenu() {
@@ -174,14 +247,16 @@ PlasmoidItem {
         addMenuItem("twoThirds", i18n("Two Thirds"), i18n("Center Two Thirds"), "WindowLayoutsCenterTwoThirds", 1 / 6, 0, 2 / 3, 1, true, "");
         addMenuItem("twoThirds", i18n("Two Thirds"), i18n("Right Two Thirds"), "WindowLayoutsRightTwoThirds", 1 / 3, 0, 2 / 3, 1, true, "");
 
-        const customLayouts = parsedCustomLayouts();
+        let customLayouts = parsedCustomLayouts();
+        const customGroups = parsedCustomGroups();
+        customLayouts = customLayoutsInGroupOrder(customLayouts, customGroups);
         for (let index = 0; index < customLayouts.length; index += 1) {
             const layout = customLayouts[index];
             addMenuItem(
                 "custom",
-                i18n("Custom"),
+                customGroups[layout.groupId] || i18n("Custom"),
                 layout.name.trim() || i18n("Custom Layout %1", index + 1),
-                `WindowLayoutsCustom${index + 1}`,
+                `WindowLayoutsCustom${layout.shortcutSlot}`,
                 layout.x,
                 layout.y,
                 layout.width,
@@ -217,7 +292,7 @@ PlasmoidItem {
     function syncCustomLayouts() {
         const helperUrl = Qt.resolvedUrl("../tools/sync-layouts.sh").toString();
         const helperPath = decodeURIComponent(helperUrl.replace(/^file:\/\//, ""));
-        const command = `${helperPath} ${encodedArgument(configuredLayoutsJson)}`;
+        const command = `${helperPath} ${encodedArgument(configuredLayoutsJson)} ${encodedArgument(configuredCustomGroupsJson)}`;
         commandRunner.connectSource(command);
     }
 
@@ -226,9 +301,10 @@ PlasmoidItem {
         const helperPath = decodeURIComponent(helperUrl.replace(/^file:\/\//, ""));
         const floatingValue = configuredFloatingButtonEnabled ? "true" : "false";
         const dragTargetsValue = configuredDragTargetsEnabled ? "true" : "false";
-        const showAllValue = configuredShowAllDragTargets ? "true" : "false";
+        const showAllZoneValue = configuredShowAllDragTargets ? "true" : "false";
+        const showAllTopValue = configuredShowAllTopDragTargets ? "true" : "false";
         commandRunner.connectSource(
-            `${helperPath} ${floatingValue} ${dragTargetsValue} ${showAllValue} ${configuredFloatingButtonSize} ${encodedArgument(configuredGroupOrderJson)}`,
+            `${helperPath} ${floatingValue} ${dragTargetsValue} ${configuredDragTargetPlacement} ${showAllZoneValue} ${showAllTopValue} ${configuredFloatingButtonSize} ${encodedArgument(configuredGroupOrderJson)} ${configuredLayoutPadding}`,
         );
     }
 
@@ -255,7 +331,14 @@ PlasmoidItem {
     onConfiguredLayoutsJsonChanged: {
         if (componentReady) {
             rebuildMenu();
-            syncCustomLayouts();
+            layoutSyncTimer.restart();
+        }
+    }
+
+    onConfiguredCustomGroupsJsonChanged: {
+        if (componentReady) {
+            rebuildMenu();
+            layoutSyncTimer.restart();
         }
     }
 
@@ -277,7 +360,25 @@ PlasmoidItem {
         }
     }
 
+    onConfiguredDragTargetPlacementChanged: {
+        if (componentReady) {
+            featureSyncTimer.restart();
+        }
+    }
+
+    onConfiguredShowAllTopDragTargetsChanged: {
+        if (componentReady) {
+            featureSyncTimer.restart();
+        }
+    }
+
     onConfiguredFloatingButtonSizeChanged: {
+        if (componentReady) {
+            featureSyncTimer.restart();
+        }
+    }
+
+    onConfiguredLayoutPaddingChanged: {
         if (componentReady) {
             featureSyncTimer.restart();
         }
@@ -303,7 +404,7 @@ PlasmoidItem {
     }
 
     onExpandedChanged: {
-        if (expanded) {
+        if (root.expanded) {
             refreshCapabilities();
         }
     }
@@ -311,7 +412,6 @@ PlasmoidItem {
     Component.onCompleted: {
         componentReady = true;
         rebuildMenu();
-        syncCustomLayouts();
         refreshCapabilities();
     }
 
@@ -328,6 +428,8 @@ PlasmoidItem {
             const exitCode = data["exit code"];
             if (exitCode !== undefined && exitCode !== 0) {
                 root.lastError = data.stderr || i18n("Could not contact the Window Layouts KWin script.");
+            } else {
+                root.lastError = "";
             }
             disconnectSource(sourceName);
         }
@@ -356,6 +458,17 @@ PlasmoidItem {
             }
             disconnectSource(sourceName);
         }
+    }
+
+    Timer {
+        id: layoutSyncTimer
+
+        // Plasma may commit layouts and custom groups in consecutive property
+        // updates. Bundle them into one writer so an older process cannot win
+        // a race and leave KWin with half of the new configuration.
+        interval: 120
+        repeat: false
+        onTriggered: root.syncCustomLayouts()
     }
 
     Timer {

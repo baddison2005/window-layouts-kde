@@ -12,4 +12,10 @@ ConfigModel {
         icon: Qt.resolvedUrl("../images/window-layouts.svg")
         source: "config/ConfigLayouts.qml"
     }
+
+    ConfigCategory {
+        name: i18n("Layout Shortcuts")
+        icon: "preferences-desktop-keyboard"
+        source: "config/ConfigShortcuts.qml"
+    }
 }

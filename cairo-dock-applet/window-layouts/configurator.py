@@ -6,10 +6,11 @@
 """Shared GTK configurator for the Window Layouts frontends."""
 
 import gi
+import time
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
-from gi.repository import Gdk, Gtk
+from gi.repository import Gdk, GLib, Gtk
 
 
 GRID_COLUMNS = 24
@@ -31,6 +32,75 @@ GROUP_LABELS = {
     "custom": "Custom",
     "window": "Window",
 }
+QT_SHIFT = 0x02000000
+QT_CONTROL = 0x04000000
+QT_ALT = 0x08000000
+QT_META = 0x10000000
+QT_KEY_MASK = 0x01FFFFFF
+GDK_TO_QT_KEY = {
+    Gdk.KEY_Escape: 0x01000000,
+    Gdk.KEY_Tab: 0x01000001,
+    Gdk.KEY_ISO_Left_Tab: 0x01000002,
+    Gdk.KEY_BackSpace: 0x01000003,
+    Gdk.KEY_Return: 0x01000004,
+    Gdk.KEY_KP_Enter: 0x01000005,
+    Gdk.KEY_Insert: 0x01000006,
+    Gdk.KEY_Delete: 0x01000007,
+    Gdk.KEY_Home: 0x01000010,
+    Gdk.KEY_End: 0x01000011,
+    Gdk.KEY_Left: 0x01000012,
+    Gdk.KEY_Up: 0x01000013,
+    Gdk.KEY_Right: 0x01000014,
+    Gdk.KEY_Down: 0x01000015,
+    Gdk.KEY_Page_Up: 0x01000016,
+    Gdk.KEY_Page_Down: 0x01000017,
+}
+for _function_number in range(1, 36):
+    GDK_TO_QT_KEY[getattr(Gdk, f"KEY_F{_function_number}")] = (
+        0x01000030 + _function_number - 1
+    )
+QT_TO_GDK_KEY = {value: key for key, value in GDK_TO_QT_KEY.items()}
+
+
+def gtk_accelerator_to_qt(keyval, modifiers):
+    """Convert GTK's accelerator representation to Qt's combined key value."""
+    qt_key = GDK_TO_QT_KEY.get(keyval)
+    if qt_key is None:
+        unicode_value = Gdk.keyval_to_unicode(keyval)
+        if not unicode_value:
+            raise ValueError("That key is not supported by Window Layouts")
+        qt_key = ord(chr(unicode_value).upper())
+    combined = qt_key
+    if modifiers & Gdk.ModifierType.SHIFT_MASK:
+        combined |= QT_SHIFT
+    if modifiers & Gdk.ModifierType.CONTROL_MASK:
+        combined |= QT_CONTROL
+    if modifiers & Gdk.ModifierType.MOD1_MASK:
+        combined |= QT_ALT
+    if modifiers & (Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.META_MASK):
+        combined |= QT_META
+    return combined
+
+
+def qt_to_gtk_accelerator(combined):
+    """Convert Qt's combined key value for display by Gtk.CellRendererAccel."""
+    combined = int(combined)
+    key = combined & QT_KEY_MASK
+    keyval = QT_TO_GDK_KEY.get(key)
+    if keyval is None and 0x20 <= key <= 0x10FFFF:
+        keyval = Gdk.unicode_to_keyval(ord(chr(key).lower()))
+    if keyval is None:
+        keyval = 0
+    modifiers = Gdk.ModifierType(0)
+    if combined & QT_SHIFT:
+        modifiers |= Gdk.ModifierType.SHIFT_MASK
+    if combined & QT_CONTROL:
+        modifiers |= Gdk.ModifierType.CONTROL_MASK
+    if combined & QT_ALT:
+        modifiers |= Gdk.ModifierType.MOD1_MASK
+    if combined & QT_META:
+        modifiers |= Gdk.ModifierType.SUPER_MASK
+    return keyval, modifiers
 
 
 class LayoutGrid(Gtk.DrawingArea):
@@ -165,16 +235,26 @@ class WindowLayoutsConfigurator(Gtk.Window):
         save_callback,
         load_settings_callback=None,
         save_settings_callback=None,
+        load_groups_callback=None,
+        save_groups_callback=None,
+        load_shortcuts_callback=None,
+        save_shortcut_callback=None,
     ):
         super().__init__(title="Configure Window Layouts")
         self.load_callback = load_callback
         self.save_callback = save_callback
         self.load_settings_callback = load_settings_callback or (lambda: {})
         self.save_settings_callback = save_settings_callback or (lambda _settings: None)
+        self.load_groups_callback = load_groups_callback or (lambda: [])
+        self.save_groups_callback = save_groups_callback or (lambda _groups: None)
+        self.load_shortcuts_callback = load_shortcuts_callback or (lambda: [])
+        self.save_shortcut_callback = save_shortcut_callback
         self.layouts = []
+        self.custom_groups = []
         self.group_order = list(DEFAULT_GROUP_ORDER)
         self.selected_group_index = 0
         self.selected_index = -1
+        self._layout_rows = {}
         self.updating_controls = False
         self.dirty = False
 
@@ -233,6 +313,30 @@ class WindowLayoutsConfigurator(Gtk.Window):
         self.name_entry = Gtk.Entry()
         self.name_entry.connect("changed", self._name_changed)
         name_row.pack_start(self.name_entry, True, True, 0)
+
+        custom_group_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        right.pack_start(custom_group_row, False, False, 0)
+        custom_group_row.pack_start(Gtk.Label(label="Custom group:"), False, False, 0)
+        self.custom_group_combo = Gtk.ComboBoxText()
+        self.custom_group_combo.connect("changed", self._custom_group_changed)
+        custom_group_row.pack_start(self.custom_group_combo, True, True, 0)
+        for label, icon, callback in (
+            ("New group", "list-add", self._new_custom_group),
+            ("Rename group", "document-edit", self._rename_custom_group),
+            ("Remove group", "edit-delete", self._remove_custom_group),
+        ):
+            button = self._button(label, icon, callback)
+            button.set_tooltip_text(label)
+            custom_group_row.pack_start(button, False, False, 0)
+            if label == "Rename group":
+                self.rename_custom_group_button = button
+            elif label == "Remove group":
+                self.remove_custom_group_button = button
+
+        shortcut_button = self._button(
+            "Keyboard Shortcuts…", "preferences-desktop-keyboard", self._show_shortcuts
+        )
+        custom_group_row.pack_start(shortcut_button, False, False, 0)
 
         help_label = Gtk.Label(
             label="Drag across the grid to choose the window's position and size.",
@@ -318,17 +422,65 @@ class WindowLayoutsConfigurator(Gtk.Window):
         self.drag_targets_switch.connect("notify::active", self._feature_changed)
         features_grid.attach(self.drag_targets_switch, 1, 2, 1, 1)
 
-        show_all_targets_label = Gtk.Label(
-            label="Show all layout targets immediately",
+        self.zone_targets_radio = Gtk.RadioButton.new_with_label_from_widget(
+            None,
+            "Layout targets at the center of each layout zone",
+        )
+        self.zone_targets_radio.set_halign(Gtk.Align.START)
+        self.zone_targets_radio.set_margin_start(20)
+        self.zone_targets_radio.connect("toggled", self._feature_changed)
+        features_grid.attach(self.zone_targets_radio, 0, 3, 2, 1)
+
+        show_all_zone_targets_label = Gtk.Label(
+            label="Display zone targets immediately",
             xalign=0,
         )
-        show_all_targets_label.set_margin_start(20)
-        show_all_targets_label.set_hexpand(True)
-        features_grid.attach(show_all_targets_label, 0, 3, 1, 1)
-        self.show_all_targets_switch = Gtk.Switch()
-        self.show_all_targets_switch.set_halign(Gtk.Align.END)
-        self.show_all_targets_switch.connect("notify::active", self._feature_changed)
-        features_grid.attach(self.show_all_targets_switch, 1, 3, 1, 1)
+        show_all_zone_targets_label.set_margin_start(40)
+        show_all_zone_targets_label.set_hexpand(True)
+        features_grid.attach(show_all_zone_targets_label, 0, 4, 1, 1)
+        self.show_all_zone_targets_switch = Gtk.Switch()
+        self.show_all_zone_targets_switch.set_halign(Gtk.Align.END)
+        self.show_all_zone_targets_switch.connect(
+            "notify::active",
+            self._feature_changed,
+        )
+        features_grid.attach(self.show_all_zone_targets_switch, 1, 4, 1, 1)
+
+        self.top_targets_radio = Gtk.RadioButton.new_with_label_from_widget(
+            self.zone_targets_radio,
+            "Layout targets in a top-center strip",
+        )
+        self.top_targets_radio.set_halign(Gtk.Align.START)
+        self.top_targets_radio.set_margin_start(20)
+        self.top_targets_radio.connect("toggled", self._feature_changed)
+        features_grid.attach(self.top_targets_radio, 0, 5, 2, 1)
+
+        show_all_top_targets_label = Gtk.Label(
+            label="Display the top-center strip immediately",
+            xalign=0,
+        )
+        show_all_top_targets_label.set_margin_start(40)
+        show_all_top_targets_label.set_hexpand(True)
+        features_grid.attach(show_all_top_targets_label, 0, 6, 1, 1)
+        self.show_all_top_targets_switch = Gtk.Switch()
+        self.show_all_top_targets_switch.set_halign(Gtk.Align.END)
+        self.show_all_top_targets_switch.connect(
+            "notify::active",
+            self._feature_changed,
+        )
+        features_grid.attach(self.show_all_top_targets_switch, 1, 6, 1, 1)
+
+        layout_padding_label = Gtk.Label(
+            label="Layout padding (pixels)",
+            xalign=0,
+        )
+        layout_padding_label.set_hexpand(True)
+        features_grid.attach(layout_padding_label, 0, 7, 1, 1)
+        self.layout_padding_spin = Gtk.SpinButton.new_with_range(0, 200, 1)
+        self.layout_padding_spin.set_numeric(True)
+        self.layout_padding_spin.set_halign(Gtk.Align.END)
+        self.layout_padding_spin.connect("value-changed", self._feature_changed)
+        features_grid.attach(self.layout_padding_spin, 1, 7, 1, 1)
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         root.pack_start(footer, False, False, 0)
@@ -350,6 +502,134 @@ class WindowLayoutsConfigurator(Gtk.Window):
         button.connect("clicked", callback)
         return button
 
+    def _show_shortcuts(self, _button):
+        if self.save_shortcut_callback is None:
+            return
+        dialog = Gtk.Dialog(
+            title="Window Layout Keyboard Shortcuts",
+            transient_for=self,
+            modal=True,
+            destroy_with_parent=True,
+        )
+        dialog.add_button("Close", Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(600, 560)
+        content = dialog.get_content_area()
+        content.set_border_width(12)
+        help_label = Gtk.Label(
+            label=(
+                "Double-click a shortcut, then press the desired key combination. "
+                "Clear it to remove the shortcut."
+            ),
+            xalign=0,
+        )
+        help_label.set_line_wrap(True)
+        content.pack_start(help_label, False, False, 6)
+
+        model = Gtk.ListStore(str, str, int, int)
+        for entry in self.load_shortcuts_callback() or []:
+            keyval, modifiers = qt_to_gtk_accelerator(entry.get("shortcut", 0))
+            model.append([
+                entry.get("label", entry.get("actionId", "")),
+                entry.get("actionId", ""),
+                keyval,
+                int(modifiers),
+            ])
+
+        view = Gtk.TreeView(model=model)
+        name_renderer = Gtk.CellRendererText()
+        name_column = Gtk.TreeViewColumn("Layout", name_renderer, text=0)
+        name_column.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
+        name_column.set_fixed_width(300)
+        view.append_column(name_column)
+        accel_renderer = Gtk.CellRendererAccel()
+        accel_renderer.set_property("editable", True)
+        accel_renderer.set_property("accel-mode", Gtk.CellRendererAccelMode.GTK)
+        accel_renderer.connect("accel-edited", self._shortcut_edited, model, dialog)
+        accel_renderer.connect("accel-cleared", self._shortcut_cleared, model, dialog)
+        shortcut_column = Gtk.TreeViewColumn(
+            "Shortcut", accel_renderer, accel_key=2, accel_mods=3
+        )
+        shortcut_column.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
+        shortcut_column.set_fixed_width(260)
+        shortcut_column.set_expand(True)
+        view.append_column(shortcut_column)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroller.add(view)
+        content.pack_start(scroller, True, True, 6)
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+
+    def _shortcut_edited(
+        self, _renderer, path, keyval, modifiers, _hardware_keycode, model, dialog
+    ):
+        try:
+            shortcut = gtk_accelerator_to_qt(keyval, modifiers)
+            iterator = model.get_iter(path)
+            action_id = model.get_value(iterator, 1)
+            result = self.save_shortcut_callback(action_id, shortcut, False)
+            conflicts = result.get("conflicts", [])
+            if conflicts:
+                descriptions = "\n".join(
+                    f"• {item['friendlyName']} ({item['componentFriendly']})"
+                    for item in conflicts
+                )
+                prompt = Gtk.MessageDialog(
+                    transient_for=dialog,
+                    modal=True,
+                    message_type=Gtk.MessageType.WARNING,
+                    buttons=Gtk.ButtonsType.NONE,
+                    text="Keyboard shortcut is already in use",
+                )
+                prompt.format_secondary_text(
+                    f"This shortcut is assigned to:\n{descriptions}\n\n"
+                    "Do you want to reassign it to this layout?"
+                )
+                prompt.add_buttons(
+                    "Cancel", Gtk.ResponseType.CANCEL,
+                    "Reassign", Gtk.ResponseType.OK,
+                )
+                response = prompt.run()
+                prompt.destroy()
+                if response != Gtk.ResponseType.OK:
+                    return
+                result = self.save_shortcut_callback(action_id, shortcut, True)
+            if not result.get("changed", False):
+                raise RuntimeError(result.get("error", "KDE rejected the shortcut"))
+            model.set(iterator, 2, keyval, 3, int(modifiers))
+        except Exception as error:
+            message = Gtk.MessageDialog(
+                transient_for=dialog,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.CLOSE,
+                text="Could not assign keyboard shortcut",
+            )
+            message.format_secondary_text(str(error))
+            message.run()
+            message.destroy()
+
+    def _shortcut_cleared(self, _renderer, path, model, dialog):
+        try:
+            iterator = model.get_iter(path)
+            action_id = model.get_value(iterator, 1)
+            result = self.save_shortcut_callback(action_id, 0, True)
+            if not result.get("changed", False):
+                raise RuntimeError(result.get("error", "KDE rejected the change"))
+            model.set(iterator, 2, 0, 3, 0)
+        except Exception as error:
+            message = Gtk.MessageDialog(
+                transient_for=dialog,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.CLOSE,
+                text="Could not remove keyboard shortcut",
+            )
+            message.format_secondary_text(str(error))
+            message.run()
+            message.destroy()
+
     @staticmethod
     def _to_grid(layout):
         column = max(0, min(GRID_COLUMNS - 1, round(layout["x"] * GRID_COLUMNS)))
@@ -368,9 +648,12 @@ class WindowLayoutsConfigurator(Gtk.Window):
             "row": row,
             "column_span": column_span,
             "row_span": row_span,
+            "shortcut_slot": layout.get("shortcutSlot", 1),
+            "group_id": layout.get("groupId", ""),
         }
 
     def show_configurator(self):
+        self.custom_groups = list(self.load_groups_callback() or [])
         self.layouts = [self._to_grid(layout) for layout in self.load_callback()]
         settings = self.load_settings_callback() or {}
         self.updating_controls = True
@@ -380,13 +663,26 @@ class WindowLayoutsConfigurator(Gtk.Window):
         self.drag_targets_switch.set_active(bool(
             settings.get("drag_targets_enabled", False)
         ))
-        self.show_all_targets_switch.set_active(bool(
+        target_placement = settings.get("drag_target_placement", "zones")
+        if target_placement not in ("zones", "top"):
+            target_placement = "zones"
+        self.zone_targets_radio.set_active(target_placement == "zones")
+        self.top_targets_radio.set_active(target_placement == "top")
+        self.show_all_zone_targets_switch.set_active(bool(
             settings.get("show_all_drag_targets", False)
+        ))
+        self.show_all_top_targets_switch.set_active(bool(
+            settings.get("show_all_top_drag_targets", False)
         ))
         floating_button_size = settings.get("floating_button_size", "default")
         if floating_button_size not in ("small", "default", "big", "extraBig"):
             floating_button_size = "default"
         self.floating_button_size_combo.set_active_id(floating_button_size)
+        try:
+            layout_padding = int(settings.get("layout_padding", 0))
+        except (TypeError, ValueError):
+            layout_padding = 0
+        self.layout_padding_spin.set_value(max(0, min(layout_padding, 200)))
         stored_group_order = settings.get("group_order", DEFAULT_GROUP_ORDER)
         self.group_order = self._validated_group_order(stored_group_order)
         self.selected_group_index = 0
@@ -397,6 +693,7 @@ class WindowLayoutsConfigurator(Gtk.Window):
         self.status_label.set_text("")
         self._set_dirty(False)
         self._rebuild_list()
+        self._rebuild_custom_group_combo()
         self.show_all()
         self.present()
 
@@ -419,19 +716,69 @@ class WindowLayoutsConfigurator(Gtk.Window):
         name = self.layouts[index]["name"].strip()
         return name or f"Custom Layout {index + 1}"
 
+    def _grouped_layout_indices(self):
+        """Return non-empty named groups followed by unassigned layouts."""
+        valid_group_ids = {
+            group.get("id") for group in self.custom_groups if group.get("id")
+        }
+        grouped = []
+        for group in self.custom_groups:
+            group_id = group.get("id")
+            indices = [
+                index for index, layout in enumerate(self.layouts)
+                if layout.get("group_id", "") == group_id
+            ]
+            if indices:
+                grouped.append((group.get("name") or "Custom group", indices))
+        unassigned = [
+            index for index, layout in enumerate(self.layouts)
+            if not layout.get("group_id")
+            or layout.get("group_id") not in valid_group_ids
+        ]
+        if unassigned:
+            grouped.append(("Unassigned", unassigned))
+        return grouped
+
+    def _adjacent_layout_index(self, offset):
+        if not 0 <= self.selected_index < len(self.layouts):
+            return -1
+        group_id = self.layouts[self.selected_index].get("group_id", "")
+        index = self.selected_index + offset
+        while 0 <= index < len(self.layouts):
+            if self.layouts[index].get("group_id", "") == group_id:
+                return index
+            index += offset
+        return -1
+
     def _rebuild_list(self):
         self.updating_controls = True
         for row in self.layout_list.get_children():
             self.layout_list.remove(row)
-        rows = []
-        for index in range(len(self.layouts)):
-            row = Gtk.ListBoxRow()
-            row.add(Gtk.Label(label=self._display_name(index), xalign=0))
-            self.layout_list.add(row)
-            rows.append(row)
+        self._layout_rows = {}
+        for group_name, indices in self._grouped_layout_indices():
+            heading_row = Gtk.ListBoxRow()
+            heading_row.layout_index = -1
+            heading_row.set_selectable(False)
+            heading_row.set_activatable(False)
+            heading = Gtk.Label(xalign=0)
+            heading.set_markup(f"<b>{GLib.markup_escape_text(group_name)}</b>")
+            heading.set_margin_top(6)
+            heading.set_margin_bottom(3)
+            heading_row.add(heading)
+            self.layout_list.add(heading_row)
+
+            for index in indices:
+                row = Gtk.ListBoxRow()
+                row.layout_index = index
+                label = Gtk.Label(label=self._display_name(index), xalign=0)
+                label.set_margin_start(14)
+                row.add(label)
+                self.layout_list.add(row)
+                self._layout_rows[index] = row
         self.layout_list.show_all()
-        if 0 <= self.selected_index < len(rows):
-            self.layout_list.select_row(rows[self.selected_index])
+        selected_row = self._layout_rows.get(self.selected_index)
+        if selected_row is not None:
+            self.layout_list.select_row(selected_row)
         self.updating_controls = False
         self._load_selected_controls()
 
@@ -449,32 +796,139 @@ class WindowLayoutsConfigurator(Gtk.Window):
                 layout["column_span"],
                 layout["row_span"],
             )
+            self._select_custom_group(layout.get("group_id", ""))
         else:
             self.name_entry.set_text("")
             self.grid.set_sensitive(False)
+            self.custom_group_combo.set_active(0)
         self.updating_controls = False
         self.add_button.set_sensitive(len(self.layouts) < MAX_LAYOUTS)
         self.remove_button.set_sensitive(valid)
-        self.up_button.set_sensitive(valid and self.selected_index > 0)
-        self.down_button.set_sensitive(
-            valid and self.selected_index < len(self.layouts) - 1
-        )
+        self.up_button.set_sensitive(self._adjacent_layout_index(-1) >= 0)
+        self.down_button.set_sensitive(self._adjacent_layout_index(1) >= 0)
         count = len(self.layouts)
         noun = "layout" if count == 1 else "layouts"
         self.layout_count_label.set_text(f"{count} of {MAX_LAYOUTS} {noun}")
         self._update_geometry_label()
 
+    def _rebuild_custom_group_combo(self):
+        current_group = ""
+        if 0 <= self.selected_index < len(self.layouts):
+            current_group = self.layouts[self.selected_index].get("group_id", "")
+        self.updating_controls = True
+        self.custom_group_combo.remove_all()
+        self.custom_group_combo.append("", "Unassigned")
+        valid_ids = {""}
+        for group in self.custom_groups:
+            group_id = group.get("id")
+            name = group.get("name")
+            if isinstance(group_id, str) and group_id and isinstance(name, str) and name:
+                self.custom_group_combo.append(group_id, name)
+                valid_ids.add(group_id)
+        if current_group not in valid_ids and 0 <= self.selected_index < len(self.layouts):
+            self.layouts[self.selected_index]["group_id"] = ""
+            current_group = ""
+        self.custom_group_combo.set_active_id(current_group)
+        self.updating_controls = False
+        self._update_custom_group_buttons()
+
+    def _select_custom_group(self, group_id):
+        self.custom_group_combo.set_active_id(group_id or "")
+        if self.custom_group_combo.get_active() < 0:
+            self.custom_group_combo.set_active_id("")
+        self._update_custom_group_buttons()
+
+    def _update_custom_group_buttons(self):
+        has_group = bool(self.custom_group_combo.get_active_id())
+        self.rename_custom_group_button.set_sensitive(has_group)
+        self.remove_custom_group_button.set_sensitive(has_group)
+
+    def _custom_group_changed(self, combo):
+        self._update_custom_group_buttons()
+        if self.updating_controls or self.selected_index < 0:
+            return
+        self.layouts[self.selected_index]["group_id"] = combo.get_active_id() or ""
+        self._rebuild_list()
+        self._set_dirty()
+
+    def _prompt_group_name(self, title, initial=""):
+        dialog = Gtk.Dialog(
+            title=title,
+            transient_for=self,
+            modal=True,
+            destroy_with_parent=True,
+        )
+        dialog.add_buttons(
+            "Cancel", Gtk.ResponseType.CANCEL,
+            "OK", Gtk.ResponseType.OK,
+        )
+        entry = Gtk.Entry()
+        entry.set_text(initial)
+        entry.set_activates_default(True)
+        content = dialog.get_content_area()
+        content.set_border_width(12)
+        content.pack_start(Gtk.Label(label="Group name", xalign=0), False, False, 4)
+        content.pack_start(entry, False, False, 4)
+        dialog.set_default_response(Gtk.ResponseType.OK)
+        dialog.show_all()
+        response = dialog.run()
+        value = entry.get_text().strip() if response == Gtk.ResponseType.OK else ""
+        dialog.destroy()
+        return value
+
+    def _new_custom_group(self, _button):
+        name = self._prompt_group_name("Create Custom Group")
+        if not name:
+            return
+        group_id = f"group-{time.monotonic_ns():x}"
+        self.custom_groups.append({"id": group_id, "name": name})
+        if 0 <= self.selected_index < len(self.layouts):
+            self.layouts[self.selected_index]["group_id"] = group_id
+        self._rebuild_custom_group_combo()
+        self._rebuild_list()
+        self._set_dirty()
+
+    def _rename_custom_group(self, _button):
+        group_id = self.custom_group_combo.get_active_id()
+        if not group_id:
+            return
+        initial = self.custom_group_combo.get_active_text() or ""
+        name = self._prompt_group_name("Rename Custom Group", initial)
+        if not name:
+            return
+        for group in self.custom_groups:
+            if group.get("id") == group_id:
+                group["name"] = name
+                break
+        self._rebuild_custom_group_combo()
+        self._rebuild_list()
+        self._set_dirty()
+
+    def _remove_custom_group(self, _button):
+        group_id = self.custom_group_combo.get_active_id()
+        if not group_id:
+            return
+        self.custom_groups = [
+            group for group in self.custom_groups if group.get("id") != group_id
+        ]
+        for layout in self.layouts:
+            if layout.get("group_id") == group_id:
+                layout["group_id"] = ""
+        self._rebuild_custom_group_combo()
+        self._rebuild_list()
+        self._set_dirty()
+
     def _row_selected(self, _list_box, row):
         if self.updating_controls:
             return
-        self.selected_index = row.get_index() if row is not None else -1
+        self.selected_index = getattr(row, "layout_index", -1) if row is not None else -1
         self._load_selected_controls()
 
     def _name_changed(self, entry):
         if self.updating_controls or self.selected_index < 0:
             return
         self.layouts[self.selected_index]["name"] = entry.get_text()
-        row = self.layout_list.get_row_at_index(self.selected_index)
+        row = self._layout_rows.get(self.selected_index)
         if row is not None:
             row.get_child().set_text(self._display_name(self.selected_index))
         self._set_dirty()
@@ -562,8 +1016,14 @@ class WindowLayoutsConfigurator(Gtk.Window):
         self.floating_button_size_combo.set_sensitive(
             self.floating_button_switch.get_active()
         )
-        self.show_all_targets_switch.set_sensitive(
-            self.drag_targets_switch.get_active()
+        drag_targets_enabled = self.drag_targets_switch.get_active()
+        self.zone_targets_radio.set_sensitive(drag_targets_enabled)
+        self.top_targets_radio.set_sensitive(drag_targets_enabled)
+        self.show_all_zone_targets_switch.set_sensitive(
+            drag_targets_enabled and self.zone_targets_radio.get_active()
+        )
+        self.show_all_top_targets_switch.set_sensitive(
+            drag_targets_enabled and self.top_targets_radio.get_active()
         )
 
     @staticmethod
@@ -587,12 +1047,19 @@ class WindowLayoutsConfigurator(Gtk.Window):
     def _add_layout(self, _button):
         if len(self.layouts) >= MAX_LAYOUTS:
             return
+        used_slots = {layout.get("shortcut_slot") for layout in self.layouts}
+        shortcut_slot = next(
+            (slot for slot in range(1, MAX_LAYOUTS + 1) if slot not in used_slots),
+            1,
+        )
         self.layouts.append({
             "name": f"Custom Layout {len(self.layouts) + 1}",
             "column": 0,
             "row": 0,
             "column_span": GRID_COLUMNS // 2,
             "row_span": GRID_ROWS // 2,
+            "shortcut_slot": shortcut_slot,
+            "group_id": "",
         })
         self.selected_index = len(self.layouts) - 1
         self._rebuild_list()
@@ -614,8 +1081,8 @@ class WindowLayoutsConfigurator(Gtk.Window):
         self._move_selected(1)
 
     def _move_selected(self, offset):
-        target = self.selected_index + offset
-        if self.selected_index < 0 or not 0 <= target < len(self.layouts):
+        target = self._adjacent_layout_index(offset)
+        if target < 0:
             return
         layout = self.layouts.pop(self.selected_index)
         self.layouts.insert(target, layout)
@@ -632,16 +1099,28 @@ class WindowLayoutsConfigurator(Gtk.Window):
                 "y": round(layout["row"] / GRID_ROWS, 6),
                 "width": round(layout["column_span"] / GRID_COLUMNS, 6),
                 "height": round(layout["row_span"] / GRID_ROWS, 6),
+                "shortcutSlot": layout.get("shortcut_slot", index + 1),
+                "groupId": layout.get("group_id", ""),
             })
         try:
             self.save_callback(serialized)
+            self.save_groups_callback(self.custom_groups)
             self.save_settings_callback({
                 "floating_button_enabled": self.floating_button_switch.get_active(),
                 "drag_targets_enabled": self.drag_targets_switch.get_active(),
-                "show_all_drag_targets": self.show_all_targets_switch.get_active(),
+                "drag_target_placement": (
+                    "top" if self.top_targets_radio.get_active() else "zones"
+                ),
+                "show_all_drag_targets": (
+                    self.show_all_zone_targets_switch.get_active()
+                ),
+                "show_all_top_drag_targets": (
+                    self.show_all_top_targets_switch.get_active()
+                ),
                 "floating_button_size": (
                     self.floating_button_size_combo.get_active_id() or "default"
                 ),
+                "layout_padding": self.layout_padding_spin.get_value_as_int(),
                 "group_order": list(self.group_order),
             })
         except Exception as error:  # keep the editor open and show a useful error
