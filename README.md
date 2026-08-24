@@ -1,5 +1,7 @@
 # Window Layouts for KDE Plasma
 
+> **Your Workspace, Organized Your Way!**
+
 Window Layouts is a window-positioning and tiling utility inspired by Magnet
 for **KDE Plasma 6 on Wayland**. It provides named layouts for the focused
 window, including familiar halves, quarters, and thirds, together with up to 20

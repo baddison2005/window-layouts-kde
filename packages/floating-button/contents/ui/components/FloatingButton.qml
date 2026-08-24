@@ -286,7 +286,7 @@ PlasmaCore.Dialog {
         hideTarget(targetWindow && targetWindow.deleted);
     }
 
-    function addMenuItem(groupId, groupName, label, actionId, x, y, width, height, hasPreview, iconName, actionEnabled = true) {
+    function addMenuItem(groupId, groupName, label, actionId, x, y, width, height, hasPreview, iconName, actionEnabled = true, previewLayoutsJson = "[]") {
         layoutModel.append({
             groupId,
             groupName,
@@ -299,6 +299,7 @@ PlasmaCore.Dialog {
             hasPreview,
             iconName,
             actionEnabled,
+            previewLayoutsJson,
         });
     }
 
@@ -347,6 +348,7 @@ PlasmaCore.Dialog {
                 hasPreview: item.hasPreview,
                 iconName: item.iconName,
                 actionEnabled: item.actionEnabled,
+                previewLayoutsJson: item.previewLayoutsJson,
             });
         }
         layoutModel.clear();
@@ -367,6 +369,7 @@ PlasmaCore.Dialog {
                         item.hasPreview,
                         item.iconName,
                         item.actionEnabled,
+                        item.previewLayoutsJson,
                     );
                 }
             }
@@ -495,6 +498,15 @@ PlasmaCore.Dialog {
         return ordered;
     }
 
+    function fillPreviewJson(previewLayouts) {
+        return JSON.stringify(previewLayouts.map(layout => ({
+            x: layout.x,
+            y: layout.y,
+            width: layout.width,
+            height: layout.height,
+        })));
+    }
+
     function rebuildMenu() {
         layoutModel.clear();
         lastError = "";
@@ -536,10 +548,20 @@ PlasmaCore.Dialog {
             );
         }
 
-        addMenuItem("fillDisplay", "Fill Display", "Horizontal Halves", "WindowLayoutsFillHorizontalHalves", 0, 0, 0, 0, false, "view-grid");
-        addMenuItem("fillDisplay", "Fill Display", "Vertical Halves", "WindowLayoutsFillVerticalHalves", 0, 0, 0, 0, false, "view-grid");
-        addMenuItem("fillDisplay", "Fill Display", "Quarters", "WindowLayoutsFillQuarters", 0, 0, 0, 0, false, "view-grid");
-        addMenuItem("fillDisplay", "Fill Display", "Thirds", "WindowLayoutsFillThirds", 0, 0, 0, 0, false, "view-grid");
+        addMenuItem("fillDisplay", "Fill Display", "Horizontal Halves", "WindowLayoutsFillHorizontalHalves", 0, 0, 0, 0, false, "", true, fillPreviewJson([
+            { x: 0, y: 0, width: 0.5, height: 1 }, { x: 0.5, y: 0, width: 0.5, height: 1 },
+        ]));
+        addMenuItem("fillDisplay", "Fill Display", "Vertical Halves", "WindowLayoutsFillVerticalHalves", 0, 0, 0, 0, false, "", true, fillPreviewJson([
+            { x: 0, y: 0, width: 1, height: 0.5 }, { x: 0, y: 0.5, width: 1, height: 0.5 },
+        ]));
+        addMenuItem("fillDisplay", "Fill Display", "Quarters", "WindowLayoutsFillQuarters", 0, 0, 0, 0, false, "", true, fillPreviewJson([
+            { x: 0, y: 0, width: 0.5, height: 0.5 }, { x: 0.5, y: 0, width: 0.5, height: 0.5 },
+            { x: 0, y: 0.5, width: 0.5, height: 0.5 }, { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
+        ]));
+        addMenuItem("fillDisplay", "Fill Display", "Thirds", "WindowLayoutsFillThirds", 0, 0, 0, 0, false, "", true, fillPreviewJson([
+            { x: 0, y: 0, width: 1 / 3, height: 1 }, { x: 1 / 3, y: 0, width: 1 / 3, height: 1 },
+            { x: 2 / 3, y: 0, width: 1 / 3, height: 1 },
+        ]));
         const customGroupList = configuredCustomGroupList();
         for (let groupIndex = 0; groupIndex < customGroupList.length; groupIndex += 1) {
             const group = customGroupList[groupIndex];
@@ -550,7 +572,8 @@ PlasmaCore.Dialog {
                     "Fill Display",
                     group.name,
                     `WindowLayoutsFillCustomGroup${group.fillShortcutSlot}`,
-                    0, 0, 0, 0, false, "view-grid",
+                    0, 0, 0, 0, false, "", true,
+                    fillPreviewJson(customLayouts.filter(layout => layout.groupId === group.id)),
                 );
             }
         }
@@ -839,6 +862,16 @@ PlasmaCore.Dialog {
                         required property bool hasPreview
                         required property string iconName
                         required property bool actionEnabled
+                        required property string previewLayoutsJson
+
+                        readonly property var previewLayouts: {
+                            try {
+                                const parsed = JSON.parse(previewLayoutsJson);
+                                return Array.isArray(parsed) ? parsed : [];
+                            } catch (error) {
+                                return [];
+                            }
+                        }
 
                         width: ListView.view.width
                         height: Kirigami.Units.gridUnit * 2
@@ -871,11 +904,29 @@ PlasmaCore.Dialog {
                                     radius: 1
                                 }
 
+                                Repeater {
+                                    model: layoutDelegate.previewLayouts
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+
+                                        x: Math.round(parent.width * modelData.x)
+                                        y: Math.round(parent.height * modelData.y)
+                                        width: Math.max(1, Math.round(parent.width * modelData.width))
+                                        height: Math.max(1, Math.round(parent.height * modelData.height))
+                                        color: "#a855f7"
+                                        border.color: Kirigami.Theme.backgroundColor
+                                        border.width: 1
+                                        radius: 1
+                                    }
+                                }
+
                                 Kirigami.Icon {
                                     anchors.centerIn: parent
                                     width: Kirigami.Units.iconSizes.small
                                     height: width
                                     visible: !layoutDelegate.hasPreview
+                                        && layoutDelegate.previewLayouts.length === 0
                                     source: layoutDelegate.iconName
                                 }
                             }

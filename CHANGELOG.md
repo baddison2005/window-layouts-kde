@@ -21,6 +21,8 @@ All notable changes to Window Layouts are documented here. This project uses
 - Menu group ordering now includes a separately reorderable Fill Display group.
 - Cairo-Dock uses compact `Fill: …` labels and combined SVG previews for
   multi-window fill actions.
+- Panel and floating-button Fill Display entries use combined miniatures that
+  show every layout region in the selected group.
 - Custom-group records now retain a stable `fillShortcutSlot` when a group is
   renamed or reordered.
 
