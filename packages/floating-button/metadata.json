@@ -13,7 +13,7 @@
         "Id": "windowlayoutsfloatingbutton",
         "License": "GPL-2.0-or-later",
         "Name": "Window Layouts Floating Button",
-        "Version": "1.0.0"
+        "Version": "1.1.0"
     },
     "X-Plasma-API": "declarativescript",
     "X-Plasma-API-Minimum-Version": "6.0",

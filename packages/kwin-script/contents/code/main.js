@@ -5,6 +5,7 @@
 
 const LOG_PREFIX = "window-layouts:";
 const MAX_CUSTOM_LAYOUTS = 20;
+const MAX_CUSTOM_GROUPS = 20;
 const MAX_LAYOUT_PADDING = 200;
 const LAYOUT_EDGE_EPSILON = 0.000001;
 const GEOMETRY_MATCH_TOLERANCE = 3;
@@ -33,11 +34,37 @@ const layouts = [
     { actionId: "WindowLayoutsRightTwoThirds", name: "Right Two Thirds", x: 1 / 3, y: 0, width: 2 / 3, height: 1 },
 ];
 
+// A fill group applies these layouts to all eligible visible windows on the
+// active window's display. Keep the IDs stable: KDE stores shortcuts by ID.
+const builtInFillGroups = [
+    {
+        actionId: "WindowLayoutsFillHorizontalHalves",
+        name: "Horizontal Halves",
+        layouts: [layouts[0], layouts[1]],
+    },
+    {
+        actionId: "WindowLayoutsFillVerticalHalves",
+        name: "Vertical Halves",
+        layouts: [layouts[2], layouts[3]],
+    },
+    {
+        actionId: "WindowLayoutsFillQuarters",
+        name: "Quarters",
+        layouts: [layouts[4], layouts[5], layouts[6], layouts[7]],
+    },
+    {
+        actionId: "WindowLayoutsFillThirds",
+        name: "Thirds",
+        layouts: [layouts[8], layouts[9], layouts[10]],
+    },
+];
+
 const originalGeometry = new Map();
 const watchedWindows = new Map();
 let lastActiveWindow = null;
 let customLayouts = [];
 let customGroups = {};
+let customGroupList = [];
 let layoutPadding = 0;
 
 function log(message) {
@@ -281,9 +308,11 @@ function loadCustomLayouts() {
         });
 
     customGroups = {};
+    customGroupList = [];
     try {
         const parsedGroups = JSON.parse(String(readConfig("CustomGroups", "[]")));
         if (Array.isArray(parsedGroups)) {
+            const usedFillSlots = [];
             for (const group of parsedGroups) {
                 if (group
                         && typeof group.id === "string"
@@ -291,7 +320,28 @@ function loadCustomLayouts() {
                         && typeof group.name === "string"
                         && group.name.trim().length > 0
                         && customGroups[group.id] === undefined) {
-                    customGroups[group.id] = group.name.trim();
+                    let fillShortcutSlot = Number.isInteger(group.fillShortcutSlot)
+                        && group.fillShortcutSlot >= 1
+                        && group.fillShortcutSlot <= MAX_CUSTOM_GROUPS
+                        && usedFillSlots.indexOf(group.fillShortcutSlot) < 0
+                            ? group.fillShortcutSlot
+                            : -1;
+                    if (fillShortcutSlot < 0) {
+                        for (let slot = 1; slot <= MAX_CUSTOM_GROUPS; slot += 1) {
+                            if (usedFillSlots.indexOf(slot) < 0) {
+                                fillShortcutSlot = slot;
+                                break;
+                            }
+                        }
+                    }
+                    const name = group.name.trim();
+                    usedFillSlots.push(fillShortcutSlot);
+                    customGroups[group.id] = name;
+                    customGroupList.push({
+                        id: group.id,
+                        name,
+                        fillShortcutSlot,
+                    });
                 }
             }
         }
@@ -300,6 +350,77 @@ function loadCustomLayouts() {
     }
 
     log(`Loaded ${customLayouts.length} custom layout(s)`);
+}
+
+function windowIsOnDesktop(window, desktop) {
+    if (window.onAllDesktops || !window.desktops || window.desktops.length === 0) {
+        return true;
+    }
+    return window.desktops.indexOf(desktop) >= 0;
+}
+
+function windowIsOnActivity(window, activity) {
+    if (!activity || !window.activities || window.activities.length === 0) {
+        return true;
+    }
+    return window.activities.indexOf(activity) >= 0;
+}
+
+function eligibleVisibleWindows(anchor) {
+    const output = anchor.output;
+    const desktop = workspace.currentDesktopForScreen(output)
+        || workspace.currentDesktop;
+    const activity = workspace.currentActivity;
+    const candidates = [];
+    const stackingOrder = workspace.stackingOrder || workspace.windowList();
+
+    // KWin exposes stackingOrder from bottom to top. Iterate backwards so the
+    // frontmost window receives the first layout, matching the macOS version.
+    for (let index = stackingOrder.length - 1; index >= 0; index -= 1) {
+        const window = stackingOrder[index];
+        if (!isEligibleWindow(window)
+                || window.minimized
+                || window.fullScreen
+                || window.output !== output
+                || !windowIsOnDesktop(window, desktop)
+                || !windowIsOnActivity(window, activity)
+                || candidates.indexOf(window) >= 0) {
+            continue;
+        }
+        candidates.push(window);
+    }
+    return candidates;
+}
+
+function fillDisplayWithLayouts(fillLayouts, preferredWindow = null) {
+    const anchor = targetWindow(preferredWindow);
+    if (!anchor || anchor.minimized || anchor.fullScreen || fillLayouts.length === 0) {
+        log("Fill display requires a visible, non-full-screen active window and a non-empty layout group");
+        return;
+    }
+
+    const windows = eligibleVisibleWindows(anchor);
+    if (windows.length === 0) {
+        log("No eligible visible windows found on the active display");
+        return;
+    }
+
+    const targetArea = workspace.clientArea(KWin.MaximizeArea, anchor);
+    for (let index = 0; index < windows.length; index += 1) {
+        const window = windows[index];
+        rememberOriginalGeometry(window);
+        leaveSpecialWindowStates(window);
+        window.frameGeometry = rectangleForLayout(
+            targetArea,
+            fillLayouts[index % fillLayouts.length],
+        );
+    }
+    lastActiveWindow = anchor;
+    log(`Filled active display with ${windows.length} window(s) across ${fillLayouts.length} layout(s)`);
+}
+
+function customFillLayouts(groupId) {
+    return customLayouts.filter(layout => layout.groupId === groupId);
 }
 
 function loadConfiguration() {
@@ -499,6 +620,15 @@ for (const layout of layouts) {
     );
 }
 
+for (const fillGroup of builtInFillGroups) {
+    registerShortcut(
+        fillGroup.actionId,
+        `Window Layouts: Fill Display — ${fillGroup.name}`,
+        "",
+        () => fillDisplayWithLayouts(fillGroup.layouts),
+    );
+}
+
 // Global shortcut registrations cannot be added and removed dynamically, so
 // reserve a small set of stable slots. Each callback resolves its layout at
 // invocation time and therefore picks up configuration changes immediately.
@@ -511,6 +641,24 @@ for (let index = 0; index < MAX_CUSTOM_LAYOUTS; index += 1) {
             const layout = customLayouts.find(candidate => candidate.shortcutSlot === index + 1);
             if (layout) {
                 applyLayout(layout);
+            }
+        },
+    );
+}
+
+// Custom group actions use stable reserved slots for the same reason as
+// custom layouts. Renaming or reordering a group does not invalidate its key.
+for (let index = 0; index < MAX_CUSTOM_GROUPS; index += 1) {
+    registerShortcut(
+        `WindowLayoutsFillCustomGroup${index + 1}`,
+        `Window Layouts: Fill Display — Custom Group ${index + 1}`,
+        "",
+        () => {
+            const group = customGroupList.find(
+                candidate => candidate.fillShortcutSlot === index + 1,
+            );
+            if (group) {
+                fillDisplayWithLayouts(customFillLayouts(group.id));
             }
         },
     );
@@ -586,6 +734,31 @@ registerUserActionsMenu(window => ({
                 : layout.name,
             triggered: () => applyLayout(layout, window),
         })),
+        {
+            title: "Fill Display — Horizontal Halves",
+            triggered: () => fillDisplayWithLayouts(builtInFillGroups[0].layouts, window),
+        },
+        {
+            title: "Fill Display — Vertical Halves",
+            triggered: () => fillDisplayWithLayouts(builtInFillGroups[1].layouts, window),
+        },
+        {
+            title: "Fill Display — Quarters",
+            triggered: () => fillDisplayWithLayouts(builtInFillGroups[2].layouts, window),
+        },
+        {
+            title: "Fill Display — Thirds",
+            triggered: () => fillDisplayWithLayouts(builtInFillGroups[3].layouts, window),
+        },
+        ...customGroupList
+            .filter(group => customFillLayouts(group.id).length > 0)
+            .map(group => ({
+                title: `Fill Display — ${group.name}`,
+                triggered: () => fillDisplayWithLayouts(
+                    customFillLayouts(group.id),
+                    window,
+                ),
+            })),
         {
             title: "Maximize",
             triggered: () => maximizeWindow(window),

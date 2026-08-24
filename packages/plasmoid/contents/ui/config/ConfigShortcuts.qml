@@ -37,8 +37,8 @@ KCM.SimpleKCM {
     property bool cfg_showAllTopDragTargetsDefault: false
     property string cfg_floatingButtonSize: "default"
     property string cfg_floatingButtonSizeDefault: "default"
-    property string cfg_groupOrder: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"window\"]"
-    property string cfg_groupOrderDefault: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"window\"]"
+    property string cfg_groupOrder: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"fillDisplay\",\"window\"]"
+    property string cfg_groupOrderDefault: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"fillDisplay\",\"window\"]"
     property string statusMessage: ""
     readonly property string helperPath: decodeURIComponent(
         Qt.resolvedUrl("../../tools/sync-shortcuts.sh").toString().replace(/^file:\/\//, ""),
@@ -73,6 +73,10 @@ KCM.SimpleKCM {
             ["WindowLayoutsLeftTwoThirds", i18n("Left Two Thirds")],
             ["WindowLayoutsCenterTwoThirds", i18n("Center Two Thirds")],
             ["WindowLayoutsRightTwoThirds", i18n("Right Two Thirds")],
+            ["WindowLayoutsFillHorizontalHalves", i18n("Fill Display — Horizontal Halves")],
+            ["WindowLayoutsFillVerticalHalves", i18n("Fill Display — Vertical Halves")],
+            ["WindowLayoutsFillQuarters", i18n("Fill Display — Quarters")],
+            ["WindowLayoutsFillThirds", i18n("Fill Display — Thirds")],
             ["WindowLayoutsMaximize", i18n("Maximize")],
             ["WindowLayoutsCenter", i18n("Center")],
             ["WindowLayoutsRestore", i18n("Restore")],
@@ -117,6 +121,48 @@ KCM.SimpleKCM {
                 layout.name.trim() || i18n("Custom Layout %1", index + 1),
             );
         });
+
+        let groups = [];
+        try {
+            const parsedGroups = JSON.parse(cfg_customGroups || "[]");
+            if (Array.isArray(parsedGroups)) {
+                groups = parsedGroups.slice(0, 20);
+            }
+        } catch (error) {
+            groups = [];
+        }
+        const usedGroupIds = [];
+        const usedFillSlots = [];
+        groups.forEach(group => {
+            if (!group
+                    || typeof group.id !== "string"
+                    || !group.id
+                    || usedGroupIds.indexOf(group.id) >= 0
+                    || typeof group.name !== "string"
+                    || !group.name.trim()) {
+                return;
+            }
+            let slot = Number.isInteger(group.fillShortcutSlot)
+                && group.fillShortcutSlot >= 1
+                && group.fillShortcutSlot <= 20
+                && usedFillSlots.indexOf(group.fillShortcutSlot) < 0
+                    ? group.fillShortcutSlot
+                    : -1;
+            if (slot < 0) {
+                for (let candidate = 1; candidate <= 20; candidate += 1) {
+                    if (usedFillSlots.indexOf(candidate) < 0) {
+                        slot = candidate;
+                        break;
+                    }
+                }
+            }
+            usedGroupIds.push(group.id);
+            usedFillSlots.push(slot);
+            appendAction(
+                `WindowLayoutsFillCustomGroup${slot}`,
+                i18n("Fill Display — %1", group.name.trim()),
+            );
+        });
         shortcutRunner.connectSource(`${helperPath} get`);
     }
 
@@ -129,6 +175,7 @@ KCM.SimpleKCM {
 
     Component.onCompleted: rebuildActions()
     onCfg_customLayoutsChanged: rebuildActions()
+    onCfg_customGroupsChanged: rebuildActions()
 
     ListModel { id: shortcutModel }
 

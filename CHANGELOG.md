@@ -3,6 +3,37 @@
 All notable changes to Window Layouts are documented here. This project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-08-24
+
+### Added
+
+- Fill Display actions for Horizontal Halves, Vertical Halves, Quarters, and
+  Thirds, plus every non-empty named custom-layout group.
+- Fill Display entries in the panel menu, floating-button menu, KWin window
+  actions menu, and optional Cairo-Dock sub-dock.
+- Global keyboard shortcuts for every built-in Fill Display action and each
+  named custom group, using stable custom-group shortcut slots.
+- Automated KWin fill regression coverage for window eligibility, front-to-back
+  assignment, layout wrapping, custom groups, and Restore.
+
+### Changed
+
+- Menu group ordering now includes a separately reorderable Fill Display group.
+- Cairo-Dock uses compact `Fill: …` labels and combined SVG previews for
+  multi-window fill actions.
+- Custom-group records now retain a stable `fillShortcutSlot` when a group is
+  renamed or reordered.
+
+### Behavior
+
+- Fill Display targets the focused window's display and current desktop and
+  activity. It includes eligible visible normal windows in front-to-back order,
+  excludes minimized, full-screen, special, immovable, and non-resizable
+  windows, and wraps through the selected layouts when necessary.
+- Every moved window keeps its own Restore geometry. Normalized layouts and
+  existing padding rules are calculated against the target display's usable
+  area, including mixed-resolution and scaled monitor configurations.
+
 ## [1.0.0] - 2026-08-18
 
 ### Added

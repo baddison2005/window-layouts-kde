@@ -15,7 +15,7 @@
             <default>default</default>
         </entry>
         <entry name="GroupOrder" type="String">
-            <default>["halves","quarters","thirds","twoThirds","custom","window"]</default>
+            <default>["halves","quarters","thirds","twoThirds","custom","fillDisplay","window"]</default>
         </entry>
     </group>
 </kcfg>

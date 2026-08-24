@@ -22,6 +22,7 @@ DEFAULT_GROUP_ORDER = (
     "thirds",
     "twoThirds",
     "custom",
+    "fillDisplay",
     "window",
 )
 GROUP_LABELS = {
@@ -30,6 +31,7 @@ GROUP_LABELS = {
     "thirds": "Thirds",
     "twoThirds": "Two Thirds",
     "custom": "Custom",
+    "fillDisplay": "Fill Display",
     "window": "Window",
 }
 QT_SHIFT = 0x02000000
@@ -881,7 +883,18 @@ class WindowLayoutsConfigurator(Gtk.Window):
         if not name:
             return
         group_id = f"group-{time.monotonic_ns():x}"
-        self.custom_groups.append({"id": group_id, "name": name})
+        used_slots = {
+            group.get("fillShortcutSlot") for group in self.custom_groups
+        }
+        fill_shortcut_slot = next(
+            (slot for slot in range(1, MAX_LAYOUTS + 1) if slot not in used_slots),
+            1,
+        )
+        self.custom_groups.append({
+            "id": group_id,
+            "name": name,
+            "fillShortcutSlot": fill_shortcut_slot,
+        })
         if 0 <= self.selected_index < len(self.layouts):
             self.layouts[self.selected_index]["group_id"] = group_id
         self._rebuild_custom_group_combo()
@@ -958,6 +971,9 @@ class WindowLayoutsConfigurator(Gtk.Window):
         for group_id in candidate:
             if group_id in DEFAULT_GROUP_ORDER and group_id not in order:
                 order.append(group_id)
+        if "fillDisplay" not in order:
+            insert_at = order.index("window") if "window" in order else len(order)
+            order.insert(insert_at, "fillDisplay")
         order.extend(group_id for group_id in DEFAULT_GROUP_ORDER if group_id not in order)
         return order
 

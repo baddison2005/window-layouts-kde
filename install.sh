@@ -126,7 +126,7 @@ do
         0
 done
 
-default_group_order='["halves","quarters","thirds","twoThirds","custom","window"]'
+default_group_order='["halves","quarters","thirds","twoThirds","custom","fillDisplay","window"]'
 for group in \
     Script-windowlayouts \
     Script-windowlayoutsfloatingbutton \
@@ -204,7 +204,7 @@ for (var panelIndex = 0; panelIndex < panelIds.length && !updated; panelIndex++)
             widget.writeConfig("showAllTopDragTargets", false);
             widget.writeConfig("floatingButtonSize", "default");
             widget.writeConfig("layoutPadding", 0);
-            widget.writeConfig("groupOrder", "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"window\"]");
+            widget.writeConfig("groupOrder", "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"fillDisplay\",\"window\"]");
             updated = true;
             break;
         }

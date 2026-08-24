@@ -44,6 +44,7 @@ DEFAULT_GROUP_ORDER = (
     "thirds",
     "twoThirds",
     "custom",
+    "fillDisplay",
     "window",
 )
 FIXED_SHORTCUTS = (
@@ -61,6 +62,26 @@ FIXED_SHORTCUTS = (
     ("WindowLayoutsLeftTwoThirds", "Window Layouts: Left Two Thirds", "Left Two Thirds"),
     ("WindowLayoutsCenterTwoThirds", "Window Layouts: Center Two Thirds", "Center Two Thirds"),
     ("WindowLayoutsRightTwoThirds", "Window Layouts: Right Two Thirds", "Right Two Thirds"),
+    (
+        "WindowLayoutsFillHorizontalHalves",
+        "Window Layouts: Fill Display — Horizontal Halves",
+        "Fill Display — Horizontal Halves",
+    ),
+    (
+        "WindowLayoutsFillVerticalHalves",
+        "Window Layouts: Fill Display — Vertical Halves",
+        "Fill Display — Vertical Halves",
+    ),
+    (
+        "WindowLayoutsFillQuarters",
+        "Window Layouts: Fill Display — Quarters",
+        "Fill Display — Quarters",
+    ),
+    (
+        "WindowLayoutsFillThirds",
+        "Window Layouts: Fill Display — Thirds",
+        "Fill Display — Thirds",
+    ),
     ("WindowLayoutsMaximize", "Window Layouts: Maximize", "Maximize"),
     ("WindowLayoutsCenter", "Window Layouts: Center", "Center"),
     ("WindowLayoutsRestore", "Window Layouts: Restore", "Restore"),
@@ -208,6 +229,7 @@ class LayoutStorage:
             return []
         groups = []
         used_ids = set()
+        used_slots = set()
         for group in candidate:
             if not isinstance(group, dict):
                 continue
@@ -217,8 +239,21 @@ class LayoutStorage:
                     or group_id in used_ids or not isinstance(name, str)
                     or not name.strip()):
                 continue
-            groups.append({"id": group_id, "name": name.strip()})
+            slot = group.get("fillShortcutSlot")
+            if (isinstance(slot, bool) or not isinstance(slot, int)
+                    or not 1 <= slot <= MAX_LAYOUTS or slot in used_slots):
+                slot = next(
+                    (candidate_slot for candidate_slot in range(1, MAX_LAYOUTS + 1)
+                     if candidate_slot not in used_slots),
+                    len(groups) + 1,
+                )
+            groups.append({
+                "id": group_id,
+                "name": name.strip(),
+                "fillShortcutSlot": slot,
+            })
             used_ids.add(group_id)
+            used_slots.add(slot)
         return groups
 
     def load_custom_groups(self):
@@ -432,6 +467,9 @@ print(updated ? "updated" : "missing");"""
         for group_id in candidate:
             if group_id in DEFAULT_GROUP_ORDER and group_id not in order:
                 order.append(group_id)
+        if "fillDisplay" not in order:
+            insert_at = order.index("window") if "window" in order else len(order)
+            order.insert(insert_at, "fillDisplay")
         order.extend(group_id for group_id in DEFAULT_GROUP_ORDER if group_id not in order)
         return order
 
@@ -734,6 +772,10 @@ class ShortcutStorage:
             suffix = action_id.removeprefix("WindowLayoutsCustom")
             if suffix.isdigit() and 1 <= int(suffix) <= MAX_LAYOUTS:
                 return f"Window Layouts: Custom {suffix}"
+        if action_id.startswith("WindowLayoutsFillCustomGroup"):
+            suffix = action_id.removeprefix("WindowLayoutsFillCustomGroup")
+            if suffix.isdigit() and 1 <= int(suffix) <= MAX_LAYOUTS:
+                return f"Window Layouts: Fill Display — Custom Group {suffix}"
         return f"Window Layouts: {action_id}"
 
     @classmethod
@@ -812,7 +854,7 @@ class ShortcutStorage:
         keys = self.interface.shortcut(self.action_identifier(action_id))
         return int(keys[0]) if keys else 0
 
-    def entries(self, layouts):
+    def entries(self, layouts, groups=None):
         entries = [
             {"actionId": action_id, "label": label, "shortcut": self.shortcut(action_id)}
             for action_id, _friendly_name, label in FIXED_SHORTCUTS
@@ -824,6 +866,17 @@ class ShortcutStorage:
                 "actionId": action_id,
                 "label": layout.get("name") or f"Custom Layout {index + 1}",
                 "shortcut": self.shortcut(action_id),
+            })
+        for group in groups or []:
+            slot = group.get("fillShortcutSlot")
+            if not isinstance(slot, int) or not 1 <= slot <= MAX_LAYOUTS:
+                continue
+            entries.append({
+                "actionId": f"WindowLayoutsFillCustomGroup{slot}",
+                "label": f"Fill Display — {group.get('name') or 'Custom Group'}",
+                "shortcut": self.shortcut(
+                    f"WindowLayoutsFillCustomGroup{slot}"
+                ),
             })
         return entries
 
@@ -888,8 +941,10 @@ class ConfiguratorService(dbus.service.Object):
             self.storage.load_feature_settings,
             self.storage.save_feature_settings,
             self.storage.load_custom_groups,
-            self.storage.save_custom_groups,
-            lambda: self.shortcuts.entries(self.storage.load()),
+            self._save_custom_groups,
+            lambda: self.shortcuts.entries(
+                self.storage.load(), self.storage.load_custom_groups()
+            ),
             self.shortcuts.set_shortcut,
         )
 
@@ -907,6 +962,21 @@ class ConfiguratorService(dbus.service.Object):
         self.storage.save(layouts)
         self._clear_unused_custom_shortcuts()
 
+    def _clear_unused_custom_group_shortcuts(self):
+        used_slots = {
+            group.get("fillShortcutSlot")
+            for group in self.storage.load_custom_groups()
+        }
+        for slot in range(1, MAX_LAYOUTS + 1):
+            if slot not in used_slots:
+                self.shortcuts.set_shortcut(
+                    f"WindowLayoutsFillCustomGroup{slot}", 0, True
+                )
+
+    def _save_custom_groups(self, groups):
+        self.storage.save_custom_groups(groups)
+        self._clear_unused_custom_group_shortcuts()
+
     @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="")
     def Show(self):
         GLib.idle_add(self._show_window)
@@ -921,7 +991,9 @@ class ConfiguratorService(dbus.service.Object):
 
     @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="s")
     def GetShortcutsJson(self):
-        entries = self.shortcuts.entries(self.storage.load())
+        entries = self.shortcuts.entries(
+            self.storage.load(), self.storage.load_custom_groups()
+        )
         return json.dumps({
             entry["actionId"]: self.shortcuts.shortcut_to_text(entry["shortcut"])
             for entry in entries
@@ -930,6 +1002,7 @@ class ConfiguratorService(dbus.service.Object):
     @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="")
     def ClearUnusedCustomShortcuts(self):
         self._clear_unused_custom_shortcuts()
+        self._clear_unused_custom_group_shortcuts()
 
     @dbus.service.method(INTERFACE_NAME, in_signature="ssb", out_signature="s")
     def SetShortcutText(self, action_id, shortcut_text, force):

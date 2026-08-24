@@ -15,6 +15,9 @@ bars or rely on X11 window-management tools.
   layouts.
 - Up to 20 named custom layouts, selected on a 24 × 12 visual grid.
 - Named custom-layout groups for organizing related layouts.
+- Fill the focused display with eligible visible windows using Horizontal
+  Halves, Vertical Halves, Quarters, Thirds, or any non-empty named custom
+  group. Windows are assigned front-to-back and layouts wrap when needed.
 - A panel widget, a floating button beside the focused window, and an optional
   Cairo-Dock sub-dock that all invoke the same KWin actions.
 - Move the focused window to the next or previous monitor and workspace, with
@@ -31,14 +34,15 @@ bars or rely on X11 window-management tools.
   before an existing shortcut is reassigned.
 - Named groups within the custom layouts, useful for keeping related layouts
   together without changing their geometry.
-- Reorder layout groups: Halves, Quarters, Thirds, Two Thirds, Custom, and
-  Window.
+- Reorder menu groups: Halves, Quarters, Thirds, Two Thirds, Custom, Fill
+  Display, and Window.
 - Per-window Restore geometry, so a laid-out window can return to its previous
   size and position.
 - Settings shared between the panel, floating button, Cairo-Dock, and the
   configuration windows.
 
-Version **1.0.0** is the first stable release of Window Layouts.
+Version **1.1.0** adds multi-window Fill Display actions across every frontend
+and the global-shortcut editors.
 
 ## Screenshots
 
@@ -137,17 +141,18 @@ Use it to:
 3. Create, rename, and remove named custom groups, then assign custom layouts
    to them. The Saved layouts list displays group headings and keeps
    unassigned layouts together.
-4. Reorder the built-in layout groups shown by the menus and drag targets.
+4. Reorder the built-in layout and action groups shown by the menus.
 5. Enable or disable the floating button and on-screen drag targets.
 6. Choose whether drag targets appear at their matching layout zones or in a
    top-center strip, and whether the selected target style appears immediately.
 7. Choose the floating-button size: Small, Default, Big, or Extra big.
 8. Set optional layout padding in pixels. Padding is applied only to layout
    edges that do not touch the monitor's usable boundary.
-9. Assign or remove a global shortcut for every fixed and custom layout, or
-   for moving a window to the previous/next workspace or monitor, from
-   **Layout Shortcuts**. KDE identifies conflicts and asks before reassigning
-   a shortcut owned by another action.
+9. Assign or remove a global shortcut for every fixed and custom layout, every
+   built-in or custom-group Fill Display action, or moving a window to the
+   previous/next workspace or monitor, from **Layout Shortcuts**. KDE
+   identifies conflicts and asks before reassigning a shortcut owned by
+   another action.
 
 Choose **Apply** to save changes and keep editing, **OK** to save changes and
 close the configuration window, or **Cancel** to discard unapplied changes.
@@ -165,10 +170,24 @@ available list. Monitor movement preserves the window's normalized layout or
 free-form geometry, so it scales to the destination display's resolution,
 scaling factor, and usable area.
 
+### Fill Display
+
+Open the **Fill Display** menu group and choose Horizontal Halves, Vertical
+Halves, Quarters, Thirds, or a named custom group. The focused window selects
+the target display. Window Layouts then arranges eligible visible application
+windows on that display in front-to-back order; when there are more windows
+than layout slots, it wraps back to the first layout.
+
+Fill Display includes normal movable and resizable windows on the target
+display's current desktop and activity. Minimized, full-screen, special,
+immovable, and non-resizable windows are left untouched. Every moved window
+retains its own Restore geometry, and each layout is calculated against that
+display's usable area and scaling. Empty custom groups are omitted from menus.
+
 ### Keyboard shortcuts
 
 Open **Configure… → Layout Shortcuts** to assign or remove a global shortcut
-for any fixed or custom layout. The same page includes actions for moving the
+for any fixed or custom layout, Fill Display choice, or action that moves the
 focused window to the previous or next workspace or monitor. If a proposed
 shortcut is already in use, KDE identifies the conflict and Window Layouts asks
 for confirmation before reassigning it.
@@ -208,7 +227,8 @@ Install the optional Cairo-Dock integration with:
 ```
 
 Then enable **Window Layouts** in **Cairo-Dock Configuration → Add-ons**. The
-applet opens a sub-dock with layout previews and the same window actions. It
+applet opens a sub-dock with layout previews and the same window actions.
+Multi-window choices use compact **Fill: …** labels and combined previews. It
 refreshes when monitors or workspaces change, and monitor entries are visibly
 unavailable when only one monitor is connected.
 

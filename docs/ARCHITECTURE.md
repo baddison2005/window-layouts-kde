@@ -60,7 +60,10 @@ a stable `shortcutSlot` from 1 through 20 and resolves to
 `WindowLayoutsCustom<slot>`, so reordering a layout does not transfer its
 shortcut to a different layout. An optional `groupId` references a record in
 `CustomGroups`; an empty ID means unassigned. The same shortcut service also
-owns the fixed previous/next workspace and monitor movement actions.
+owns the fixed previous/next workspace and monitor movement actions. Each
+custom-group record has a stable `fillShortcutSlot` from 1 through 20, resolved
+as `WindowLayoutsFillCustomGroup<slot>`, so its Fill Display shortcut survives
+group renames and ordering changes.
 
 The panel stores its own copies in the Plasmoid's `General` configuration group.
 That copy lets its KCM configuration page bind normally to `cfg_*` properties.
@@ -88,6 +91,20 @@ calculated. This allows the same fixed or custom layout to scale across
 monitors with different resolutions, scale factors, and reserved panel areas.
 Padding is edge-aware: only boundaries inside the usable monitor area are
 inset, while boundaries coinciding with a usable screen edge remain flush.
+
+### Fill a display
+
+1. A frontend invokes one of the fixed `WindowLayoutsFill*` actions or a
+   reserved `WindowLayoutsFillCustomGroup<slot>` action.
+2. The focused or most recently eligible window selects the target display.
+3. `eligibleVisibleWindows()` reverses KWin's bottom-to-top stacking order and
+   filters it to movable, resizable normal windows on that display's current
+   desktop and activity. Minimized and full-screen windows are excluded.
+4. `fillDisplayWithLayouts()` remembers each window's Restore geometry and
+   assigns layouts front-to-back, wrapping only when the window count exceeds
+   the number of layouts.
+5. Every rectangle is calculated against the target display's `MaximizeArea`,
+   so display resolution, scaling, reserved panels, and padding are respected.
 
 ### Apply configuration from the panel
 
@@ -147,6 +164,11 @@ window.
   different usable monitor sizes.
 - `applyLayout()`, `maximizeWindow()`, and `centerWindow()` perform geometry
   changes.
+- `eligibleVisibleWindows()` applies the display, desktop, activity, visibility,
+  and window-type filters for multi-window fill operations.
+- `fillDisplayWithLayouts()` assigns a built-in or custom layout group to
+  eligible windows in front-to-back order and preserves per-window Restore
+  geometry.
 - `moveToAdjacentMonitor()` implements wrapped, resolution-aware monitor
   movement; `moveToAdjacentWorkspace()` implements wrapped workspace movement.
 - `loadCustomLayouts()` validates the persisted custom-layout JSON.
@@ -193,7 +215,7 @@ service D-Bus activatable in the user session.
 
 `packages/plasmoid/contents/ui/config/ConfigLayouts.qml` is the Plasma KCM
 page. It has independent models for custom layouts, the grouped Saved layouts
-view, custom groups, and the six menu groups; the `store*()` functions only
+view, custom groups, and the seven menu groups; the `store*()` functions only
 update `cfg_*` properties so Cancel remains safe.
 
 `ConfigShortcuts.qml` uses KDE's native `KeySequenceItem`, whose validator
@@ -229,9 +251,9 @@ Group order also determines the order of cards stacked at identical centers.
 `cairo-dock-applet/window-layouts/window-layouts`
 
 - `refresh_subdock()` builds entries in the configured group order and creates
-  SVG previews. Custom entries deliberately show only the layout name because
-  Cairo-Dock has limited label space; named group labels remain a panel and
-  floating-button presentation feature.
+  SVG previews. Custom layout entries deliberately show only the layout name
+  because Cairo-Dock has limited label space; Fill Display entries use concise
+  `Fill: …` names and combined previews for the whole group.
 - `_load_group_order()` follows the canonical KWin setting.
 - `_save_feature_settings()` delegates to the D-Bus service, then schedules a
   refresh after the asynchronous D-Bus save.
@@ -273,6 +295,7 @@ python3 -m py_compile \
   cairo-dock-applet/window-layouts/window-layouts
 xmllint --noout packages/*/contents/config/main.xml
 jq empty packages/*/metadata.json
+node tests/test-kwin-fill-display.js
 ```
 
 Use `./install-drag-overlay.sh` for panel, floating-button, drag-target,
@@ -295,6 +318,9 @@ Test at least these cases before release:
 - fixed and custom shortcuts, clearing shortcuts, and accepting or rejecting a
   detected conflict;
 - previous/next workspace and monitor shortcuts;
+- built-in and named custom-group Fill Display actions from every frontend,
+  including shortcut assignment, mixed eligible/ineligible windows, wrapping,
+  and per-window Restore;
 - padding at zero and a non-zero value, including layouts that touch usable
   monitor edges;
 - floating-button enable/disable and every size;

@@ -305,7 +305,7 @@ PlasmaCore.Dialog {
     function configuredGroupOrder() {
         // Read stable IDs from KWin configuration, never visible labels. This
         // keeps an existing order intact when Plasma's display language changes.
-        const defaults = ["halves", "quarters", "thirds", "twoThirds", "custom", "window"];
+        const defaults = ["halves", "quarters", "thirds", "twoThirds", "custom", "fillDisplay", "window"];
         let stored = [];
         try {
             const parsed = JSON.parse(String(KWin.readConfig("GroupOrder", "[]")));
@@ -317,6 +317,10 @@ PlasmaCore.Dialog {
         }
         const order = stored.filter((groupId, index) =>
             defaults.indexOf(groupId) >= 0 && stored.indexOf(groupId) === index);
+        if (order.indexOf("fillDisplay") < 0) {
+            const windowIndex = order.indexOf("window");
+            order.splice(windowIndex >= 0 ? windowIndex : order.length, 0, "fillDisplay");
+        }
         defaults.forEach(groupId => {
             if (order.indexOf(groupId) < 0) {
                 order.push(groupId);
@@ -430,6 +434,14 @@ PlasmaCore.Dialog {
     }
 
     function configuredCustomGroups() {
+        const groups = {};
+        configuredCustomGroupList().forEach(group => {
+            groups[group.id] = group.name;
+        });
+        return groups;
+    }
+
+    function configuredCustomGroupList() {
         let parsed = [];
         try {
             const candidate = JSON.parse(String(KWin.readConfig("CustomGroups", "[]")));
@@ -439,15 +451,33 @@ PlasmaCore.Dialog {
         } catch (error) {
             parsed = [];
         }
-        const groups = {};
-        parsed.forEach(group => {
+        const groups = [];
+        const usedIds = [];
+        const usedSlots = [];
+        parsed.slice(0, 20).forEach(group => {
             if (group
                     && typeof group.id === "string"
                     && group.id.length > 0
                     && typeof group.name === "string"
                     && group.name.trim().length > 0
-                    && groups[group.id] === undefined) {
-                groups[group.id] = group.name.trim();
+                    && usedIds.indexOf(group.id) < 0) {
+                let slot = Number.isInteger(group.fillShortcutSlot)
+                    && group.fillShortcutSlot >= 1
+                    && group.fillShortcutSlot <= 20
+                    && usedSlots.indexOf(group.fillShortcutSlot) < 0
+                        ? group.fillShortcutSlot
+                        : -1;
+                if (slot < 0) {
+                    for (let candidate = 1; candidate <= 20; candidate += 1) {
+                        if (usedSlots.indexOf(candidate) < 0) {
+                            slot = candidate;
+                            break;
+                        }
+                    }
+                }
+                usedIds.push(group.id);
+                usedSlots.push(slot);
+                groups.push({ id: group.id, name: group.name.trim(), fillShortcutSlot: slot });
             }
         });
         return groups;
@@ -504,6 +534,25 @@ PlasmaCore.Dialog {
                 true,
                 "",
             );
+        }
+
+        addMenuItem("fillDisplay", "Fill Display", "Horizontal Halves", "WindowLayoutsFillHorizontalHalves", 0, 0, 0, 0, false, "view-grid");
+        addMenuItem("fillDisplay", "Fill Display", "Vertical Halves", "WindowLayoutsFillVerticalHalves", 0, 0, 0, 0, false, "view-grid");
+        addMenuItem("fillDisplay", "Fill Display", "Quarters", "WindowLayoutsFillQuarters", 0, 0, 0, 0, false, "view-grid");
+        addMenuItem("fillDisplay", "Fill Display", "Thirds", "WindowLayoutsFillThirds", 0, 0, 0, 0, false, "view-grid");
+        const customGroupList = configuredCustomGroupList();
+        for (let groupIndex = 0; groupIndex < customGroupList.length; groupIndex += 1) {
+            const group = customGroupList[groupIndex];
+            const hasLayouts = customLayouts.some(layout => layout.groupId === group.id);
+            if (hasLayouts) {
+                addMenuItem(
+                    "fillDisplay",
+                    "Fill Display",
+                    group.name,
+                    `WindowLayoutsFillCustomGroup${group.fillShortcutSlot}`,
+                    0, 0, 0, 0, false, "view-grid",
+                );
+            }
         }
 
         addMenuItem("window", "Window", "Maximize", "WindowLayoutsMaximize", 0, 0, 1, 1, true, "");

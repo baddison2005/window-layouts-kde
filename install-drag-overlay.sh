@@ -20,9 +20,9 @@ package_id="windowlayoutsdragtargets"
 core_package_id="windowlayouts"
 legacy_package_id="windowlayoutsdragoverlay"
 runtime_cachebuster=$(date +%s%N)
-runtime_version="1.0.0-$runtime_cachebuster"
+runtime_version="1.1.0-$runtime_cachebuster"
 floating_package_id="windowlayoutsfloatingbutton"
-floating_runtime_version="1.0.0-$runtime_cachebuster"
+floating_runtime_version="1.1.0-$runtime_cachebuster"
 data_directory=$(qtpaths6 --writable-path GenericDataLocation)
 config_directory=$(qtpaths6 --writable-path ConfigLocation)
 
@@ -93,11 +93,38 @@ group_order=$(kreadconfig6 \
     --file kwinrc \
     --group Script-windowlayouts \
     --key GroupOrder \
-    --default '["halves","quarters","thirds","twoThirds","custom","window"]')
-if ! printf '%s' "$group_order" \
-    | grep -Eq '^\["(halves|quarters|thirds|twoThirds|custom|window)"(,"(halves|quarters|thirds|twoThirds|custom|window)")*\]$'
+    --default '["halves","quarters","thirds","twoThirds","custom","fillDisplay","window"]')
+if ! group_order=$(python3 -c '
+import json
+import sys
+
+defaults = ["halves", "quarters", "thirds", "twoThirds", "custom", "fillDisplay", "window"]
+candidate = json.loads(sys.argv[1])
+if not isinstance(candidate, list):
+    raise SystemExit(1)
+
+# Repair the short-lived pre-release migration value produced by an earlier
+# shell string substitution, then validate and de-duplicate stable group IDs.
+expanded = []
+for value in candidate:
+    if value == "fillDisplay,window":
+        expanded.extend(("fillDisplay", "window"))
+    else:
+        expanded.append(value)
+order = []
+for value in expanded:
+    if value in defaults and value not in order:
+        order.append(value)
+if "fillDisplay" not in order:
+    position = order.index("window") if "window" in order else len(order)
+    order.insert(position, "fillDisplay")
+for value in defaults:
+    if value not in order:
+        order.append(value)
+print(json.dumps(order, separators=(",", ":")))
+' "$group_order")
 then
-    group_order='["halves","quarters","thirds","twoThirds","custom","window"]'
+    group_order='["halves","quarters","thirds","twoThirds","custom","fillDisplay","window"]'
 fi
 group_order_escaped=${group_order//\\/\\\\}
 group_order_escaped=${group_order_escaped//\"/\\\"}
@@ -197,6 +224,36 @@ custom_groups=$(kreadconfig6 \
     --group Script-windowlayouts \
     --key CustomGroups \
     --default '[]')
+if ! custom_groups=$(python3 -c '
+import json
+import sys
+
+candidate = json.loads(sys.argv[1])
+if not isinstance(candidate, list):
+    raise SystemExit(1)
+groups = []
+used_ids = set()
+used_slots = set()
+for group in candidate[:20]:
+    if not isinstance(group, dict):
+        continue
+    group_id = group.get("id")
+    name = group.get("name")
+    if (not isinstance(group_id, str) or not group_id or group_id in used_ids
+            or not isinstance(name, str) or not name.strip()):
+        continue
+    slot = group.get("fillShortcutSlot")
+    if (isinstance(slot, bool) or not isinstance(slot, int)
+            or not 1 <= slot <= 20 or slot in used_slots):
+        slot = next(value for value in range(1, 21) if value not in used_slots)
+    groups.append({"id": group_id, "name": name.strip(), "fillShortcutSlot": slot})
+    used_ids.add(group_id)
+    used_slots.add(slot)
+print(json.dumps(groups, separators=(",", ":"), ensure_ascii=False))
+' "$custom_groups")
+then
+    custom_groups='[]'
+fi
 custom_groups_escaped=${custom_groups//\\/\\\\}
 custom_groups_escaped=${custom_groups_escaped//\"/\\\"}
 kwriteconfig6 \

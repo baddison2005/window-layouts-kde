@@ -34,10 +34,10 @@ KCM.SimpleKCM {
     property string cfg_floatingButtonSizeDefault: "default"
     property int cfg_layoutPadding: 0
     property int cfg_layoutPaddingDefault: 0
-    property string cfg_groupOrder: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"window\"]"
-    property string cfg_groupOrderDefault: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"window\"]"
+    property string cfg_groupOrder: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"fillDisplay\",\"window\"]"
+    property string cfg_groupOrderDefault: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"fillDisplay\",\"window\"]"
     readonly property var floatingButtonSizes: ["small", "default", "big", "extraBig"]
-    readonly property var groupIds: ["halves", "quarters", "thirds", "twoThirds", "custom", "window"]
+    readonly property var groupIds: ["halves", "quarters", "thirds", "twoThirds", "custom", "fillDisplay", "window"]
 
     readonly property int gridColumns: 24
     readonly property int gridRows: 12
@@ -67,6 +67,7 @@ KCM.SimpleKCM {
         case "thirds": return i18n("Thirds");
         case "twoThirds": return i18n("Two Thirds");
         case "custom": return i18n("Custom");
+        case "fillDisplay": return i18n("Fill Display");
         case "window": return i18n("Window");
         default: return groupId;
         }
@@ -94,6 +95,14 @@ KCM.SimpleKCM {
             if (groupIds.indexOf(groupId) >= 0 && validated.indexOf(groupId) < 0) {
                 validated.push(groupId);
             }
+        }
+        if (validated.indexOf("fillDisplay") < 0) {
+            const windowIndex = validated.indexOf("window");
+            validated.splice(
+                windowIndex >= 0 ? windowIndex : validated.length,
+                0,
+                "fillDisplay",
+            );
         }
         for (let index = 0; index < groupIds.length; index += 1) {
             if (validated.indexOf(groupIds[index]) < 0) {
@@ -274,6 +283,7 @@ KCM.SimpleKCM {
             parsed = [];
         }
         const usedIds = [];
+        const usedSlots = [];
         for (let index = 0; index < parsed.length; index += 1) {
             const group = parsed[index];
             if (group
@@ -282,8 +292,27 @@ KCM.SimpleKCM {
                     && usedIds.indexOf(group.id) < 0
                     && typeof group.name === "string"
                     && group.name.trim().length > 0) {
-                customGroupModel.append({ groupId: group.id, groupName: group.name.trim() });
+                let fillShortcutSlot = Number.isInteger(group.fillShortcutSlot)
+                    && group.fillShortcutSlot >= 1
+                    && group.fillShortcutSlot <= 20
+                    && usedSlots.indexOf(group.fillShortcutSlot) < 0
+                        ? group.fillShortcutSlot
+                        : -1;
+                if (fillShortcutSlot < 0) {
+                    for (let slot = 1; slot <= 20; slot += 1) {
+                        if (usedSlots.indexOf(slot) < 0) {
+                            fillShortcutSlot = slot;
+                            break;
+                        }
+                    }
+                }
+                customGroupModel.append({
+                    groupId: group.id,
+                    groupName: group.name.trim(),
+                    fillShortcutSlot,
+                });
                 usedIds.push(group.id);
+                usedSlots.push(fillShortcutSlot);
             }
         }
         loadingCustomGroups = false;
@@ -297,7 +326,11 @@ KCM.SimpleKCM {
         const groups = [];
         for (let index = 0; index < customGroupModel.count; index += 1) {
             const group = customGroupModel.get(index);
-            groups.push({ id: group.groupId, name: group.groupName });
+            groups.push({
+                id: group.groupId,
+                name: group.groupName,
+                fillShortcutSlot: group.fillShortcutSlot,
+            });
         }
         updatingCustomGroups = true;
         cfg_customGroups = JSON.stringify(groups);
@@ -308,6 +341,19 @@ KCM.SimpleKCM {
         const used = [];
         for (let index = 0; index < customLayoutModel.count; index += 1) {
             used.push(customLayoutModel.get(index).shortcutSlot);
+        }
+        for (let slot = 1; slot <= 20; slot += 1) {
+            if (used.indexOf(slot) < 0) {
+                return slot;
+            }
+        }
+        return 1;
+    }
+
+    function nextFillShortcutSlot() {
+        const used = [];
+        for (let index = 0; index < customGroupModel.count; index += 1) {
+            used.push(customGroupModel.get(index).fillShortcutSlot);
         }
         for (let slot = 1; slot <= 20; slot += 1) {
             if (used.indexOf(slot) < 0) {
@@ -505,7 +551,11 @@ KCM.SimpleKCM {
             return;
         }
         const groupId = `group-${Date.now().toString(36)}-${customGroupModel.count + 1}`;
-        customGroupModel.append({ groupId, groupName: trimmedName });
+        customGroupModel.append({
+            groupId,
+            groupName: trimmedName,
+            fillShortcutSlot: nextFillShortcutSlot(),
+        });
         storeCustomGroups();
         rebuildCustomGroupChoices();
         if (selectedIndex >= 0) {

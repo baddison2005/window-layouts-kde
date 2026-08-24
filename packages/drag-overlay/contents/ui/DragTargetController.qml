@@ -222,7 +222,7 @@ QtObject {
     function allLayouts() {
         // Group order has no effect on geometry, but it deliberately controls
         // the stacking order of cards whose layout centers are identical.
-        const defaults = ["halves", "quarters", "thirds", "twoThirds", "custom", "window"];
+        const defaults = ["halves", "quarters", "thirds", "twoThirds", "custom", "fillDisplay", "window"];
         let stored = [];
         try {
             const parsed = JSON.parse(String(KWin.readConfig("GroupOrder", "[]")));
@@ -962,6 +962,6 @@ QtObject {
     Component.onCompleted: {
         loadFeatureSettings();
         signalWindow = Workspace.activeWindow;
-        console.info("window-layouts-drag-overlay: Loaded input-transparent drag targets 1.0.0");
+        console.info("window-layouts-drag-overlay: Loaded input-transparent drag targets 1.1.0");
     }
 }

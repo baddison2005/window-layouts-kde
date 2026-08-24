@@ -6,6 +6,7 @@
 """Cairo-Dock frontend for the Window Layouts KWin script."""
 
 import json
+import hashlib
 import math
 import os
 import subprocess
@@ -34,6 +35,34 @@ FIXED_LAYOUTS = [
     ("twoThirds", "Right Two Thirds", "WindowLayoutsRightTwoThirds", 1 / 3, 0, 2 / 3, 1),
 ]
 
+BUILTIN_FILL_GROUPS = [
+    (
+        "Horizontal Halves",
+        "WindowLayoutsFillHorizontalHalves",
+        [(0, 0, 1 / 2, 1), (1 / 2, 0, 1 / 2, 1)],
+    ),
+    (
+        "Vertical Halves",
+        "WindowLayoutsFillVerticalHalves",
+        [(0, 0, 1, 1 / 2), (0, 1 / 2, 1, 1 / 2)],
+    ),
+    (
+        "Quarters",
+        "WindowLayoutsFillQuarters",
+        [
+            (0, 0, 1 / 2, 1 / 2),
+            (1 / 2, 0, 1 / 2, 1 / 2),
+            (0, 1 / 2, 1 / 2, 1 / 2),
+            (1 / 2, 1 / 2, 1 / 2, 1 / 2),
+        ],
+    ),
+    (
+        "Thirds",
+        "WindowLayoutsFillThirds",
+        [(0, 0, 1 / 3, 1), (1 / 3, 0, 1 / 3, 1), (2 / 3, 0, 1 / 3, 1)],
+    ),
+]
+
 WINDOW_ACTIONS = [
     ("Maximize", "WindowLayoutsMaximize", (0, 0, 1, 1), "window-maximize"),
     ("Center", "WindowLayoutsCenter", (0.15, 0.15, 0.7, 0.7), "align-horizontal-center"),
@@ -51,6 +80,7 @@ DEFAULT_GROUP_ORDER = (
     "thirds",
     "twoThirds",
     "custom",
+    "fillDisplay",
     "window",
 )
 CAPABILITY_REFRESH_SECONDS = 15
@@ -112,6 +142,10 @@ class WindowLayoutsApplet(CDApplet):
 
         custom_groups = self._load_custom_groups()
         group_names = {group["id"]: group["name"] for group in custom_groups}
+        group_fill_actions = {
+            group["id"]: f"WindowLayoutsFillCustomGroup{group['fillShortcutSlot']}"
+            for group in custom_groups
+        }
         valid_layouts = []
         used_slots = set()
         for index, layout in enumerate(layouts[:20]):
@@ -153,6 +187,8 @@ class WindowLayoutsApplet(CDApplet):
                 "name": name.strip() or f"Custom Layout {index + 1}",
                 "action": f"WindowLayoutsCustom{slot}",
                 "group_name": group_names.get(group_id, ""),
+                "group_id": group_id,
+                "group_fill_action": group_fill_actions.get(group_id, ""),
                 "x": x,
                 "y": y,
                 "width": width,
@@ -172,6 +208,7 @@ class WindowLayoutsApplet(CDApplet):
             return []
         validated = []
         used_ids = set()
+        used_slots = set()
         if not isinstance(groups, list):
             return validated
         for group in groups:
@@ -183,8 +220,21 @@ class WindowLayoutsApplet(CDApplet):
                     or group_id in used_ids or not isinstance(name, str)
                     or not name.strip()):
                 continue
-            validated.append({"id": group_id, "name": name.strip()})
+            slot = group.get("fillShortcutSlot")
+            if (isinstance(slot, bool) or not isinstance(slot, int)
+                    or not 1 <= slot <= 20 or slot in used_slots):
+                slot = next(
+                    (candidate for candidate in range(1, 21)
+                     if candidate not in used_slots),
+                    len(validated) + 1,
+                )
+            validated.append({
+                "id": group_id,
+                "name": name.strip(),
+                "fillShortcutSlot": slot,
+            })
             used_ids.add(group_id)
+            used_slots.add(slot)
         return validated
 
     def _save_custom_layouts(self, layouts):
@@ -381,6 +431,9 @@ print(updated ? "updated" : "missing");"""
         for group_id in candidate:
             if group_id in DEFAULT_GROUP_ORDER and group_id not in order:
                 order.append(group_id)
+        if "fillDisplay" not in order:
+            insert_at = order.index("window") if "window" in order else len(order)
+            order.insert(insert_at, "fillDisplay")
         order.extend(group_id for group_id in DEFAULT_GROUP_ORDER if group_id not in order)
         return order
 
@@ -507,6 +560,32 @@ print(updated ? "updated" : "missing");"""
 """
         return self._write_preview(filename, svg)
 
+    def _fill_preview(self, geometries):
+        coordinates = "-".join(
+            str(round(value * 1_000_000))
+            for geometry in geometries
+            for value in geometry
+        )
+        rectangles = []
+        for x, y, width, height in geometries:
+            rectangles.append(
+                '<rect x="{:.3f}" y="{:.3f}" width="{:.3f}" height="{:.3f}" '
+                'rx="2" fill="#a855f7" stroke="#e9d5ff" stroke-width="1.5"/>'.format(
+                    8 + x * 80,
+                    8 + y * 48,
+                    width * 80,
+                    height * 48,
+                )
+            )
+        svg = """<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64" viewBox="0 0 96 64">
+  <rect x="2" y="2" width="92" height="60" rx="6" fill="#2f273b" stroke="#d8c8ee" stroke-width="3"/>
+  <rect x="8" y="8" width="80" height="48" rx="2" fill="#4a4058"/>
+  {}
+</svg>
+""".format("\n  ".join(rectangles))
+        digest = hashlib.sha256(coordinates.encode("ascii")).hexdigest()[:16]
+        return self._write_preview(f"fill-{digest}.svg", svg)
+
     def _monitor_preview(self, direction, enabled):
         state = "active" if enabled else "disabled"
         color = "#a855f7" if enabled else "#77717f"
@@ -552,6 +631,8 @@ print(updated ? "updated" : "missing");"""
             layout["name"],
             layout["action"],
             layout["group_name"],
+            layout["group_id"],
+            layout["group_fill_action"],
             layout["x"],
             layout["y"],
             layout["width"],
@@ -594,6 +675,27 @@ print(updated ? "updated" : "missing");"""
                     layout["height"],
                 ),
                 layout["action"],
+            ))
+
+        for label, action, geometries in BUILTIN_FILL_GROUPS:
+            grouped_entries["fillDisplay"].append((
+                f"Fill: {label}",
+                self._fill_preview(geometries),
+                action,
+            ))
+        custom_groups = self._load_custom_groups()
+        for group in custom_groups:
+            geometries = [
+                (layout["x"], layout["y"], layout["width"], layout["height"])
+                for layout in custom_layouts
+                if layout["group_id"] == group["id"]
+            ]
+            if not geometries:
+                continue
+            grouped_entries["fillDisplay"].append((
+                f"Fill: {group['name']}",
+                self._fill_preview(geometries),
+                f"WindowLayoutsFillCustomGroup{group['fillShortcutSlot']}",
             ))
 
         for label, action, geometry, fallback_image in WINDOW_ACTIONS:
