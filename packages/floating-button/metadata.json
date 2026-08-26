@@ -3,9 +3,11 @@
     "KPlugin": {
         "Authors": [
             {
-                "Name": "Window Layouts contributors"
+                "Name": "Dr. Bret Addison",
+                "Website": "https://github.com/baddison2005"
             }
         ],
+        "BugReportUrl": "https://github.com/baddison2005/window-layouts-kde/issues",
         "Category": "Window Management",
         "Description": "Shows Window Layouts controls beside the focused window",
         "EnabledByDefault": false,
@@ -13,7 +15,8 @@
         "Id": "windowlayoutsfloatingbutton",
         "License": "GPL-2.0-or-later",
         "Name": "Window Layouts Floating Button",
-        "Version": "1.1.0"
+        "Version": "1.2.0",
+        "Website": "https://github.com/baddison2005/window-layouts-kde"
     },
     "X-Plasma-API": "declarativescript",
     "X-Plasma-API-Minimum-Version": "6.0",

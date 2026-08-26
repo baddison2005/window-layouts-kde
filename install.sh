@@ -12,6 +12,9 @@ drag_overlay_package="$project_dir/packages/drag-overlay"
 plasmoid_package="$project_dir/packages/plasmoid"
 configurator_source="$project_dir/helpers/window-layouts-configurator-service"
 configurator_ui_source="$project_dir/cairo-dock-applet/window-layouts/configurator.py"
+updater_source="$project_dir/helpers/updater.py"
+version_source="$project_dir/VERSION"
+logo_source="$project_dir/packages/plasmoid/contents/images/window-layouts.svg"
 configurator_service_template="$project_dir/helpers/org.example.WindowLayouts.Configurator.service.in"
 
 data_directory=$(qtpaths6 --writable-path GenericDataLocation)
@@ -21,6 +24,9 @@ dbus_service_directory="$data_directory/dbus-1/services"
 install -d -m 755 "$configurator_directory" "$dbus_service_directory"
 install -m 755 "$configurator_source" "$configurator_directory/window-layouts-configurator-service"
 install -m 644 "$configurator_ui_source" "$configurator_directory/configurator.py"
+install -m 644 "$updater_source" "$configurator_directory/updater.py"
+install -m 644 "$version_source" "$configurator_directory/VERSION"
+install -m 644 "$logo_source" "$configurator_directory/window-layouts.svg"
 
 configurator_service_file=$(mktemp)
 trap 'rm -f "$configurator_service_file"' EXIT HUP INT TERM

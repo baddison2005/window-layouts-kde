@@ -18,4 +18,13 @@ ConfigModel {
         icon: "preferences-desktop-keyboard"
         source: "config/ConfigShortcuts.qml"
     }
+
+    ConfigCategory {
+        // Plasma owns the final native About page and does not expose an API
+        // for third-party controls inside it. Keep update actions adjacent to
+        // that page while metadata supplies the native About information.
+        name: i18n("Updates")
+        icon: "software-update-available"
+        source: "config/ConfigUpdates.qml"
+    }
 }

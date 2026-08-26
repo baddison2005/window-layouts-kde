@@ -6,6 +6,8 @@
 """Shared GTK configurator for the Window Layouts frontends."""
 
 import gi
+from pathlib import Path
+import threading
 import time
 
 gi.require_version("Gtk", "3.0")
@@ -16,6 +18,11 @@ from gi.repository import Gdk, GLib, Gtk
 GRID_COLUMNS = 24
 GRID_ROWS = 12
 MAX_LAYOUTS = 20
+APP_VERSION = "1.2.0"
+PROJECT_URL = "https://github.com/baddison2005/window-layouts-kde"
+HELP_URL = f"{PROJECT_URL}/issues"
+RELEASES_URL = f"{PROJECT_URL}/releases"
+LOGO_PATH = Path(__file__).resolve().with_name("window-layouts.svg")
 DEFAULT_GROUP_ORDER = (
     "halves",
     "quarters",
@@ -241,6 +248,8 @@ class WindowLayoutsConfigurator(Gtk.Window):
         save_groups_callback=None,
         load_shortcuts_callback=None,
         save_shortcut_callback=None,
+        check_updates_callback=None,
+        install_update_callback=None,
     ):
         super().__init__(title="Configure Window Layouts")
         self.load_callback = load_callback
@@ -251,6 +260,8 @@ class WindowLayoutsConfigurator(Gtk.Window):
         self.save_groups_callback = save_groups_callback or (lambda _groups: None)
         self.load_shortcuts_callback = load_shortcuts_callback or (lambda: [])
         self.save_shortcut_callback = save_shortcut_callback
+        self.check_updates_callback = check_updates_callback
+        self.install_update_callback = install_update_callback
         self.layouts = []
         self.custom_groups = []
         self.group_order = list(DEFAULT_GROUP_ORDER)
@@ -486,6 +497,10 @@ class WindowLayoutsConfigurator(Gtk.Window):
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         root.pack_start(footer, False, False, 0)
+        about_button = self._button(
+            "About & Updates…", "help-about", self._show_about
+        )
+        footer.pack_start(about_button, False, False, 0)
         self.status_label = Gtk.Label(xalign=0)
         footer.pack_start(self.status_label, True, True, 0)
         self.ok_button = self._button("OK", "dialog-ok", self._ok)
@@ -501,8 +516,217 @@ class WindowLayoutsConfigurator(Gtk.Window):
         button = Gtk.Button.new_with_label(label)
         button.set_image(Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.BUTTON))
         button.set_always_show_image(True)
-        button.connect("clicked", callback)
+        if callback is not None:
+            button.connect("clicked", callback)
         return button
+
+    @staticmethod
+    def _run_background(callback, finished_callback):
+        """Run network and installer work without blocking GTK's event loop."""
+        def worker():
+            try:
+                result = callback()
+            except Exception as error:  # callbacks return user-facing errors
+                result = {"error": str(error)}
+            GLib.idle_add(finished_callback, result)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_about(self, _button):
+        dialog = Gtk.Dialog(
+            title="About Window Layouts",
+            transient_for=self,
+            modal=True,
+            destroy_with_parent=True,
+        )
+        dialog.add_button("Close", Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(620, 520)
+        content = dialog.get_content_area()
+        content.set_border_width(18)
+        content.set_spacing(14)
+
+        identity = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
+        content.pack_start(identity, False, False, 0)
+        if LOGO_PATH.is_file():
+            logo = Gtk.Image.new_from_file(str(LOGO_PATH))
+        else:
+            logo = Gtk.Image.new_from_icon_name("view-grid", Gtk.IconSize.DIALOG)
+        logo.set_pixel_size(96)
+        identity.pack_start(logo, False, False, 0)
+
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        identity.pack_start(title_box, True, True, 0)
+        title = Gtk.Label(xalign=0)
+        title.set_markup(f"<span size='xx-large'><b>Window Layouts {APP_VERSION}</b></span>")
+        title_box.pack_start(title, False, False, 0)
+        description = Gtk.Label(
+            label="Flexible window positioning and layouts for KDE Plasma Wayland.",
+            xalign=0,
+        )
+        description.set_line_wrap(True)
+        title_box.pack_start(description, False, False, 0)
+
+        details = Gtk.Grid(column_spacing=16, row_spacing=10)
+        content.pack_start(details, False, False, 0)
+        for row, (heading, widget) in enumerate((
+            ("Author", Gtk.Label(label="Dr. Bret Addison", xalign=0)),
+            ("Website", Gtk.LinkButton.new_with_label(PROJECT_URL, PROJECT_URL)),
+            ("Get Help", Gtk.LinkButton.new_with_label(HELP_URL, "Report an issue on GitHub")),
+        )):
+            heading_label = Gtk.Label(xalign=0)
+            heading_label.set_markup(f"<b>{heading}</b>")
+            details.attach(heading_label, 0, row, 1, 1)
+            widget.set_halign(Gtk.Align.START)
+            details.attach(widget, 1, row, 1, 1)
+
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        content.pack_start(separator, False, False, 2)
+        update_heading = Gtk.Label(xalign=0)
+        update_heading.set_markup("<span size='large'><b>Software Updates</b></span>")
+        content.pack_start(update_heading, False, False, 0)
+        update_help = Gtk.Label(
+            label=(
+                "Check GitHub Releases for a newer stable version. Updates are "
+                "downloaded over HTTPS and installed only after their published "
+                "SHA-256 checksum has been verified."
+            ),
+            xalign=0,
+        )
+        update_help.set_line_wrap(True)
+        content.pack_start(update_help, False, False, 0)
+
+        update_status = Gtk.Label(
+            label=f"Installed version: {APP_VERSION}",
+            xalign=0,
+        )
+        update_status.set_line_wrap(True)
+        update_status.set_selectable(True)
+        content.pack_start(update_status, False, False, 0)
+
+        update_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        content.pack_start(update_actions, False, False, 0)
+        spinner = Gtk.Spinner()
+        update_actions.pack_start(spinner, False, False, 0)
+        check_button = self._button("Check for Updates", "view-refresh", None)
+        install_button = self._button(
+            "Install Update", "software-update-available", None
+        )
+        install_button.set_sensitive(False)
+        releases_button = Gtk.LinkButton.new_with_label(
+            RELEASES_URL, "View GitHub Releases"
+        )
+        update_actions.pack_start(check_button, False, False, 0)
+        update_actions.pack_start(install_button, False, False, 0)
+        update_actions.pack_end(releases_button, False, False, 0)
+
+        state = {"destroyed": False, "latest": ""}
+        dialog.connect("destroy", lambda *_args: state.update(destroyed=True))
+
+        def set_busy(busy):
+            check_button.set_sensitive(not busy and self.check_updates_callback is not None)
+            install_button.set_sensitive(
+                not busy and bool(state["latest"])
+            )
+            if busy:
+                spinner.start()
+            else:
+                spinner.stop()
+
+        def check_finished(result):
+            if state["destroyed"]:
+                return GLib.SOURCE_REMOVE
+            set_busy(False)
+            if result.get("error"):
+                state["latest"] = ""
+                install_button.set_sensitive(False)
+                update_status.set_text(f"Could not check for updates: {result['error']}")
+            elif result.get("updateAvailable"):
+                if result.get("canInstall"):
+                    state["latest"] = result.get("latestVersion", "")
+                    install_button.set_label(
+                        f"Install v{state['latest']}"
+                    )
+                    install_button.set_sensitive(True)
+                    update_status.set_text(
+                        f"Window Layouts {state['latest']} is available."
+                    )
+                else:
+                    state["latest"] = ""
+                    install_button.set_sensitive(False)
+                    update_status.set_text(
+                        result.get("installReason") or "A manual update is available."
+                    )
+            else:
+                state["latest"] = ""
+                install_button.set_sensitive(False)
+                update_status.set_text(
+                    f"Window Layouts {APP_VERSION} is up to date."
+                )
+            return GLib.SOURCE_REMOVE
+
+        def install_finished(result):
+            if state["destroyed"]:
+                return GLib.SOURCE_REMOVE
+            set_busy(False)
+            if result.get("error"):
+                update_status.set_text(f"Could not install the update: {result['error']}")
+            elif result.get("installed"):
+                installed_version = result.get("latestVersion", state["latest"])
+                state["latest"] = ""
+                install_button.set_sensitive(False)
+                update_status.set_text(
+                    f"Window Layouts {installed_version} was installed. "
+                    "Close and reopen Configure Window Layouts to load its updated About page."
+                )
+            else:
+                state["latest"] = ""
+                install_button.set_sensitive(False)
+                update_status.set_text("Window Layouts is already up to date.")
+            return GLib.SOURCE_REMOVE
+
+        def check_clicked(_clicked_button):
+            if self.check_updates_callback is None:
+                update_status.set_text("The update service is unavailable.")
+                return
+            state["latest"] = ""
+            set_busy(True)
+            update_status.set_text("Checking GitHub Releases…")
+            self._run_background(self.check_updates_callback, check_finished)
+
+        def install_clicked(_clicked_button):
+            if self.install_update_callback is None or not state["latest"]:
+                return
+            prompt = Gtk.MessageDialog(
+                transient_for=dialog,
+                modal=True,
+                message_type=Gtk.MessageType.QUESTION,
+                buttons=Gtk.ButtonsType.NONE,
+                text=f"Install Window Layouts {state['latest']}?",
+            )
+            prompt.format_secondary_text(
+                "Your existing layouts and feature settings will be preserved."
+            )
+            prompt.add_buttons(
+                "Cancel", Gtk.ResponseType.CANCEL,
+                "Install", Gtk.ResponseType.OK,
+            )
+            response = prompt.run()
+            prompt.destroy()
+            if response != Gtk.ResponseType.OK:
+                return
+            set_busy(True)
+            update_status.set_text(
+                f"Downloading, verifying, and installing {state['latest']}…"
+            )
+            self._run_background(self.install_update_callback, install_finished)
+
+        check_button.connect("clicked", check_clicked)
+        install_button.connect("clicked", install_clicked)
+        check_button.set_sensitive(self.check_updates_callback is not None)
+        dialog.show_all()
+        spinner.stop()
+        dialog.run()
+        dialog.destroy()
 
     def _show_shortcuts(self, _button):
         if self.save_shortcut_callback is None:

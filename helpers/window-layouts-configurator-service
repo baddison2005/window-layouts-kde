@@ -7,6 +7,7 @@
 
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 
@@ -19,6 +20,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk
 
 from configurator import WindowLayoutsConfigurator
+from updater import UpdateError, UpdateManager
 
 
 SERVICE_NAME = "org.example.WindowLayouts.Configurator"
@@ -158,14 +160,72 @@ class LayoutStorage:
     """Read, validate, and synchronize custom layouts across frontends."""
 
     @staticmethod
-    def _command_output(arguments, timeout=10):
-        completed = subprocess.run(
-            arguments,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+    def _kwriteconfig_lock_path(arguments):
+        """Return the KConfig lock used by a kwriteconfig6 invocation."""
+        if not arguments or Path(arguments[0]).name != "kwriteconfig6":
+            return None
+        try:
+            config_name = arguments[arguments.index("--file") + 1]
+        except (ValueError, IndexError):
+            return None
+
+        config_path = Path(config_name)
+        if not config_path.is_absolute():
+            config_root = Path(
+                os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+            )
+            config_path = config_root / config_path
+        return config_path.with_name(f"{config_path.name}.lock")
+
+    @classmethod
+    def _clear_abandoned_kconfig_lock(cls, arguments):
+        """Remove only a kwriteconfig6 lock whose recorded owner is gone.
+
+        subprocess.run kills and waits for a child when it times out, but
+        KConfig can leave that child's lock file behind. Every later writer
+        then waits for the same dead PID. A lock owned by any live process is
+        deliberately left untouched.
+        """
+        lock_path = cls._kwriteconfig_lock_path(arguments)
+        if lock_path is None:
+            return False
+        try:
+            owner_pid = int(lock_path.read_text(encoding="utf-8").splitlines()[0])
+        except (FileNotFoundError, IndexError, OSError, ValueError):
+            return False
+
+        try:
+            os.kill(owner_pid, 0)
+        except ProcessLookupError:
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return False
+            return True
+        except (PermissionError, OSError):
+            return False
+        return False
+
+    @classmethod
+    def _command_output(cls, arguments, timeout=10):
+        # Recover before launching a writer so one abandoned lock cannot make
+        # every Apply attempt pause for the full subprocess timeout.
+        cls._clear_abandoned_kconfig_lock(arguments)
+        try:
+            completed = subprocess.run(
+                arguments,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            # subprocess.run has killed and reaped the timed-out child by this
+            # point. Clear a lock it owned, but preserve locks from live peers.
+            cls._clear_abandoned_kconfig_lock(arguments)
+            raise
         return completed.stdout.strip()
 
     @staticmethod
@@ -935,6 +995,7 @@ class ConfiguratorService(dbus.service.Object):
         super().__init__(bus_name, OBJECT_PATH)
         self.storage = LayoutStorage()
         self.shortcuts = ShortcutStorage()
+        self.updater = UpdateManager()
         self.window = WindowLayoutsConfigurator(
             self.storage.load,
             self._save_layouts,
@@ -946,7 +1007,21 @@ class ConfiguratorService(dbus.service.Object):
                 self.storage.load(), self.storage.load_custom_groups()
             ),
             self.shortcuts.set_shortcut,
+            self._check_for_updates,
+            self._install_latest_update,
         )
+
+    def _update_result(self, callback):
+        try:
+            return callback()
+        except UpdateError as error:
+            return {"error": str(error)}
+
+    def _check_for_updates(self):
+        return self._update_result(self.updater.check)
+
+    def _install_latest_update(self):
+        return self._update_result(self.updater.install_latest)
 
     def _clear_unused_custom_shortcuts(self):
         used_slots = {

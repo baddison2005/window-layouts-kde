@@ -73,6 +73,9 @@ fi
 rm -f \
     "$configurator_directory/window-layouts-configurator-service" \
     "$configurator_directory/configurator.py" \
+    "$configurator_directory/updater.py" \
+    "$configurator_directory/VERSION" \
+    "$configurator_directory/window-layouts.svg" \
     "$configurator_service"
 rmdir "$configurator_directory" 2>/dev/null || true
 

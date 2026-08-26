@@ -3,6 +3,36 @@
 All notable changes to Window Layouts are documented here. This project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-08-26
+
+### Added
+
+- A GitHub release checker in the panel configuration and the shared GTK
+  configurator opened from Cairo-Dock or the floating button.
+- User-confirmed installation of release archives after verifying their
+  published SHA-256 checksum. Updates preserve existing Window Layouts
+  configuration and do not require administrator privileges.
+- Offline updater regression coverage for semantic-version comparison, release
+  asset selection, and archive path-traversal rejection.
+
+### Changed
+
+- About information now identifies Dr. Bret Addison as the author and links
+  the project website and help actions to the Window Layouts GitHub repository.
+- The native Plasma About page uses the Window Layouts logo. Plasma's adjacent
+  Updates page and the shared GTK About & Updates dialog use the same branding
+  and release source.
+
+### Fixed
+
+- The drag-target Wayland surface is now forced transparent and off-screen at
+  1 × 1 unless KWin still reports a genuine interactive move. Its input-mask
+  workaround and per-drag surface creation were removed to avoid compositor
+  churn while retaining a geometry-based pointer-input fail-safe.
+- The shared configurator now detects and removes only abandoned KConfig lock
+  files. A timed-out `kwriteconfig6` process can therefore no longer leave all
+  later Apply attempts waiting on a dead process.
+
 ## [1.1.0] - 2026-08-24
 
 ### Added

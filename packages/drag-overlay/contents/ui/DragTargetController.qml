@@ -519,6 +519,12 @@ QtObject {
         if (revision !== mappingRevision || !dragActive) {
             return;
         }
+        // A queued remap can run after KWin has already finished the move.
+        // Never allow that late callback to restore a screen-sized surface.
+        if (!isInteractiveMove(dragWindow)) {
+            finishDrag(false);
+            return;
+        }
         overlayMapped = true;
     }
 
@@ -841,8 +847,20 @@ QtObject {
         method: "invokeShortcut"
     }
 
-    property PlasmaCore.Dialog overlay: PlasmaCore.Dialog {
+    // Keep one cheap surface alive instead of constructing and destroying a
+    // full-screen Plasma dialog for every move. Outside a positively detected
+    // interactive move it is transparent, 1x1, and far off-screen. This makes
+    // stale visibility or input-region state harmless while avoiding Wayland
+    // surface/mask churn in KWin's main thread.
+    property PlasmaCore.Dialog overlayWindow: PlasmaCore.Dialog {
         id: overlayWindow
+
+        // Both values are QML-owned, bindable properties. The queued remap
+        // callback separately verifies KWin's non-bindable window state before
+        // setting overlayMapped, avoiding repeated binding reevaluations and
+        // the associated KWin warnings.
+        readonly property bool safelyMapped: controller.dragActive
+            && controller.overlayMapped
 
         title: "Window Layouts Drag Targets"
         location: PlasmaCore.Types.Floating
@@ -853,14 +871,12 @@ QtObject {
             | Qt.WindowTransparentForInput
             | Qt.Tool
         hideOnWindowDeactivate: false
-        // Neither the whole overlay nor its delegates accepts pointer input.
-        // Hover is derived from Workspace.cursorPos instead.
-        outputOnly: true
-        visible: controller.dragActive && controller.overlayMapped
-        x: controller.availableArea.x
-        y: controller.availableArea.y
-        width: controller.availableArea.width
-        height: controller.availableArea.height
+        visible: true
+        opacity: safelyMapped ? 1 : 0
+        x: safelyMapped ? controller.availableArea.x : -32768
+        y: safelyMapped ? controller.availableArea.y : -32768
+        width: safelyMapped ? controller.availableArea.width : 1
+        height: safelyMapped ? controller.availableArea.height : 1
 
         mainItem: Item {
             width: overlayWindow.width
@@ -962,6 +978,6 @@ QtObject {
     Component.onCompleted: {
         loadFeatureSettings();
         signalWindow = Workspace.activeWindow;
-        console.info("window-layouts-drag-overlay: Loaded input-transparent drag targets 1.1.0");
+        console.info("window-layouts-drag-overlay: Loaded input-transparent drag targets 1.2.0");
     }
 }

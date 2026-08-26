@@ -3,17 +3,20 @@
     "KPlugin": {
         "Authors": [
             {
-                "Name": "Window Layouts contributors"
+                "Name": "Dr. Bret Addison",
+                "Website": "https://github.com/baddison2005"
             }
         ],
+        "BugReportUrl": "https://github.com/baddison2005/window-layouts-kde/issues",
         "Category": "Windows and Tasks",
         "Description": "Choose fixed or custom layouts for the active window",
         "EnabledByDefault": false,
-        "Icon": "view-grid",
+        "Icon": "/images/window-layouts.svg",
         "Id": "org.example.windowlayouts",
         "License": "GPL-2.0-or-later",
         "Name": "Window Layouts",
-        "Version": "1.1.0"
+        "Version": "1.2.0",
+        "Website": "https://github.com/baddison2005/window-layouts-kde"
     },
     "X-Plasma-API-Minimum-Version": "6.0"
 }

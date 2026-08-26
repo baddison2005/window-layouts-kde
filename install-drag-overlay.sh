@@ -15,14 +15,17 @@ floating_package_directory="$project_directory/packages/floating-button"
 plasmoid_directory="$project_directory/packages/plasmoid"
 configurator_source="$project_directory/helpers/window-layouts-configurator-service"
 configurator_ui_source="$project_directory/cairo-dock-applet/window-layouts/configurator.py"
+updater_source="$project_directory/helpers/updater.py"
+version_source="$project_directory/VERSION"
+logo_source="$project_directory/packages/plasmoid/contents/images/window-layouts.svg"
 guard_source="$project_directory/cairo-dock-applet/cairo-dock-unlock-guard"
 package_id="windowlayoutsdragtargets"
 core_package_id="windowlayouts"
 legacy_package_id="windowlayoutsdragoverlay"
 runtime_cachebuster=$(date +%s%N)
-runtime_version="1.1.0-$runtime_cachebuster"
+runtime_version="1.2.0-$runtime_cachebuster"
 floating_package_id="windowlayoutsfloatingbutton"
-floating_runtime_version="1.1.0-$runtime_cachebuster"
+floating_runtime_version="1.2.0-$runtime_cachebuster"
 data_directory=$(qtpaths6 --writable-path GenericDataLocation)
 config_directory=$(qtpaths6 --writable-path ConfigLocation)
 
@@ -179,7 +182,17 @@ if [ -f "$installed_configurator" ]; then
     install -m 644 \
         "$configurator_ui_source" \
         "$(dirname -- "$installed_configurator")/configurator.py"
-    if command -v qdbus-qt6 >/dev/null 2>&1; then
+    install -m 644 \
+        "$updater_source" \
+        "$(dirname -- "$installed_configurator")/updater.py"
+    install -m 644 \
+        "$version_source" \
+        "$(dirname -- "$installed_configurator")/VERSION"
+    install -m 644 \
+        "$logo_source" \
+        "$(dirname -- "$installed_configurator")/window-layouts.svg"
+    if [ "${WINDOW_LAYOUTS_SKIP_CONFIGURATOR_RESTART:-false}" != true ] \
+            && command -v qdbus-qt6 >/dev/null 2>&1; then
         qdbus-qt6 \
             org.example.WindowLayouts.Configurator \
             /org/example/WindowLayouts/Configurator \

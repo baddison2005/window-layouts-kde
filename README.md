@@ -42,9 +42,14 @@ bars or rely on X11 window-management tools.
   size and position.
 - Settings shared between the panel, floating button, Cairo-Dock, and the
   configuration windows.
+- Built-in GitHub release checking and user-confirmed, checksum-verified updates
+  from either configuration interface.
 
-Version **1.1.0** adds multi-window Fill Display actions across every frontend
-and the global-shortcut editors.
+Version **1.2.0** adds GitHub release checking and verified user-level updates,
+unifies About information and branding, prevents abandoned KConfig locks from
+blocking Apply, and hardens the Wayland drag overlay against intercepting mouse
+input after a move. Version 1.1.0 introduced multi-window Fill Display actions
+and their global shortcuts.
 
 ## Screenshots
 
@@ -155,6 +160,9 @@ Use it to:
    previous/next workspace or monitor, from **Layout Shortcuts**. KDE
    identifies conflicts and asks before reassigning a shortcut owned by
    another action.
+10. Check for and install stable releases from the panel's **Updates** page or
+    **About & Updates…** in the shared configurator opened through Cairo-Dock
+    or the floating button.
 
 Choose **Apply** to save changes and keep editing, **OK** to save changes and
 close the configuration window, or **Cancel** to discard unapplied changes.
@@ -242,6 +250,28 @@ autostart service and does not start a duplicate dock.
 
 ## Updating and uninstalling
 
+### Update from the configuration window
+
+Open **Configure Window Layouts → Updates** from the panel. Plasma supplies its
+native **About** page immediately below it, showing the Window Layouts logo,
+version, GitHub website, issue tracker, and author. From the configuration
+window opened through Cairo-Dock or the floating button, choose **About &
+Updates…**.
+
+Select **Check for Updates** to query the latest stable GitHub Release. When a
+new version includes the official Window Layouts update archive and checksum,
+select **Install** and confirm. Window Layouts downloads the archive over HTTPS,
+verifies its published SHA-256 checksum, rejects unsafe archive paths, and runs
+the settings-preserving user installer. It does not request `sudo` and does not
+modify a local source checkout. Close and reopen the configuration window after
+an update to load its newly installed About information.
+
+If a release does not contain the expected verified package, Window Layouts
+offers its GitHub release page for manual installation instead of executing an
+unverified download.
+
+### Update from source
+
 For panel, floating-button, drag-target, shared configurator, or Cairo-Dock
 source changes, run:
 
@@ -255,6 +285,8 @@ placement, and group-order settings already selected.
 
 `install.sh` remains the clean first-install path and intentionally resets the
 optional floating-button and drag-target settings to their safe defaults.
+
+### Uninstall
 
 To remove the core components and panel widget:
 
@@ -286,10 +318,18 @@ qdbus-qt6 org.kde.KWin /Scripting \
 qdbus-qt6 org.kde.KWin /KWin reconfigure
 ```
 
+The drag-target overlay has a separate geometry fail-safe: outside a confirmed
+interactive move its Wayland surface is transparent, reduced to 1 × 1, and
+placed off-screen. If desktop input still appears blocked after dragging,
+disable **Show layout targets while dragging a window** and include the time of
+the incident with your bug report so the relevant KWin journal entries can be
+identified.
+
 ## Support, bugs, and contributions
 
 Please report bugs, feature requests, and reproducible problems through the
-[GitHub Issues tracker](../../issues). Include your Plasma/KWin version,
+[GitHub Issues tracker](https://github.com/baddison2005/window-layouts-kde/issues).
+Include your Plasma/KWin version,
 Fedora version, display setup, steps to reproduce the issue, and relevant log
 output where possible.
 

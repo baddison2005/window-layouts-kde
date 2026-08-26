@@ -33,6 +33,7 @@ menu.
 | `packages/floating-button` | QML | Wayland-native compact button and popup beside the focused window. |
 | `packages/drag-overlay` | QML | Input-transparent layout targets displayed during an interactive move. |
 | `helpers/window-layouts-configurator-service` | Python | D-Bus host and canonical settings synchronizer. |
+| `helpers/updater.py` | Python | GitHub release discovery, checksum verification, safe extraction, and settings-preserving update installation. |
 | `cairo-dock-applet/window-layouts` | Python | Cairo-Dock sub-dock frontend and GTK configuration entry point. |
 | `cairo-dock-applet/window-layouts/configurator.py` | Python + GTK 3 | Shared layout, custom-group, shortcut, feature, and group-order editor. |
 
@@ -132,6 +133,26 @@ committing related values.
    the fallback for changed custom layouts, custom-group assignments, or group
    order from any frontend.
 
+### Check for and install an update
+
+1. `ConfigUpdates.qml` launches the installed updater through Plasma's
+   asynchronous executable data engine. The GTK About & Updates dialog calls
+   the same `UpdateManager` module in a background thread.
+2. `UpdateManager.check()` queries GitHub's latest stable release API and
+   compares strict three-part semantic versions.
+3. Automatic installation is offered only when the release contains both
+   `window-layouts-kde-v<version>.tar.gz` and its matching `.sha256` asset.
+4. `UpdateManager.install_latest()` downloads both files over HTTPS, validates
+   the published SHA-256 digest, and rejects absolute paths, traversal, links,
+   devices, and files outside the expected archive root.
+5. The extracted `VERSION` must match the GitHub tag before the updater runs
+   `install-drag-overlay.sh`. That path preserves layouts, shortcuts, optional
+   feature states, padding, target placement, and group order.
+
+The checksum detects corrupted or mismatched downloads; it is published beside
+the archive under the same GitHub release trust boundary. The updater never
+uses `sudo` and never changes the user's source checkout.
+
 ### Floating button on Wayland
 
 `FloatingButton.qml` owns a `PlasmaCore.Dialog` rather than an application
@@ -146,7 +167,10 @@ input surface.
 uses `Qt.WindowTransparentForInput`, derives hover from `Workspace.cursorPos`,
 and invokes the normal KWin action only after the move completes. This keeps
 the overlay from stealing the mouse event that is moving the application
-window.
+window. Outside a confirmed move, its persistent `PlasmaCore.Dialog` is fully
+transparent and constrained to a 1 × 1 off-screen geometry. Keeping one tiny
+surface avoids per-drag Wayland surface churn, while the geometry fail-safe
+does not depend on compositor input masks being honored correctly.
 
 ## File and function reference
 
@@ -187,6 +211,10 @@ drag-target model, and Cairo-Dock `FIXED_LAYOUTS` together.
 - `LayoutStorage.load()` / `save()` manage custom-layout JSON.
 - `load_feature_settings()` / `save_feature_settings()` manage feature flags,
   size, padding, and group order.
+- `_clear_abandoned_kconfig_lock()` checks the recorded lock owner before each
+  `kwriteconfig6` call and removes the lock only when that process no longer
+  exists. It also cleans up a timed-out writer after it has been killed and
+  reaped.
 - `_set_script_enabled()` explicitly loads or unloads optional declarative
   scripts. Reconfigure alone does not reliably unload a script that was loaded
   manually in the current session.
@@ -198,6 +226,8 @@ drag-target model, and Cairo-Dock `FIXED_LAYOUTS` together.
   Conflict reassignment removes only the chosen key from previous actions.
 - `GetShortcutsJson()` / `SetShortcutText()` support the Plasma shortcut page;
   the GTK editor uses the same `ShortcutStorage` methods directly.
+- `UpdateManager` callbacks supply the GTK About & Updates dialog without
+  duplicating release or installation logic.
 
 `helpers/org.example.WindowLayouts.Configurator.service.in` makes the Python
 service D-Bus activatable in the user session.
@@ -225,6 +255,12 @@ through `sync-shortcuts.sh` to the shared service.
 Custom shortcuts attach to stable numbered slots rather than list positions.
 Moving a custom layout within the Saved layouts list or assigning it to a
 different custom group therefore does not move its shortcut to another layout.
+
+`ConfigUpdates.qml` is adjacent to Plasma's shell-owned native About page. It
+uses `contents/tools/update.sh` to launch the installed `updater.py` CLI through
+Plasma's asynchronous executable data engine. The native About page itself is
+populated from the Plasmoid's `KPlugin` metadata and cannot be extended by a
+third-party widget.
 
 ### Floating button and drag overlay
 
@@ -296,6 +332,10 @@ python3 -m py_compile \
 xmllint --noout packages/*/contents/config/main.xml
 jq empty packages/*/metadata.json
 node tests/test-kwin-fill-display.js
+node tests/test-drag-overlay-failsafe.js
+python3 tests/test-config-lock-recovery.py
+python3 tests/test-updater.py
+python3 tests/test-release-metadata.py
 ```
 
 Use `./install-drag-overlay.sh` for panel, floating-button, drag-target,
@@ -329,3 +369,21 @@ Test at least these cases before release:
 - settings synchronized among the panel, floating button, drag targets, and
   Cairo-Dock without restarting the session;
 - lock/unlock and monitor disconnect/reconnect when Cairo-Dock is enabled.
+- update checks for current, older, and newer semantic versions; a release with
+  missing assets; checksum failure; and a successful settings-preserving update
+  from both configuration interfaces.
+
+## Release artifacts
+
+After the release commit and tag exist, build the two assets required by the
+in-app updater from that exact tag:
+
+```bash
+scripts/build-release-artifacts.sh v1.2.0 /tmp/window-layouts-v1.2.0
+```
+
+Upload both the `.tar.gz` and `.tar.gz.sha256` files to the GitHub Release. The
+archive's top-level directory, file names, `VERSION`, tag, and metadata versions
+must agree. `tests/test-release-metadata.py` checks the source-side version and
+About metadata; `UpdateManager` checks the release tag, asset names, checksum,
+safe archive structure, and packaged `VERSION` before installation.
