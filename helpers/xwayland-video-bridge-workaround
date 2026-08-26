@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Dr. Bret Addison
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Opt-in workaround for an Xwayland Video Bridge process whose transparent
+# capture window is unexpectedly receiving pointer input. Window Layouts does
+# not disable the bridge automatically because legacy X11 screen sharing may
+# depend on it.
+
+set -eu
+
+action=${1:-status}
+if [ -n "${WINDOW_LAYOUTS_XDG_CONFIG_HOME:-}" ]; then
+    config_directory=$WINDOW_LAYOUTS_XDG_CONFIG_HOME
+else
+    config_directory=$(qtpaths6 --writable-path ConfigLocation)
+fi
+autostart_directory="$config_directory/autostart"
+override_file="$autostart_directory/org.kde.xwaylandvideobridge.desktop"
+managed_marker='X-Window-Layouts-Managed=true'
+bridge_pattern='^(/usr/bin/)?xwaylandvideobridge([[:space:]]|$)'
+
+usage() {
+    printf '%s\n' \
+        "Usage: $0 {status|disable|enable}" \
+        "" \
+        "  status   Show the user override and running-process state." \
+        "  disable  Stop the bridge and disable its future autostart." \
+        "  enable   Remove only the override created by this helper."
+}
+
+is_managed_override() {
+    [ -f "$override_file" ] \
+        && grep -Fqx "$managed_marker" "$override_file"
+}
+
+bridge_is_running() {
+    pgrep -f "$bridge_pattern" >/dev/null 2>&1
+}
+
+show_status() {
+    if is_managed_override; then
+        printf '%s\n' "Autostart: disabled by the Window Layouts workaround"
+    elif [ -e "$override_file" ]; then
+        printf '%s\n' "Autostart: controlled by an existing user override"
+    else
+        printf '%s\n' "Autostart: enabled by the system desktop entry"
+    fi
+
+    if bridge_is_running; then
+        printf '%s\n' "Process: running"
+    else
+        printf '%s\n' "Process: not running"
+    fi
+}
+
+disable_bridge() {
+    if [ -e "$override_file" ] && ! is_managed_override; then
+        printf '%s\n' \
+            "Refusing to replace an existing user autostart override:" \
+            "$override_file" >&2
+        exit 1
+    fi
+
+    install -d -m 755 "$autostart_directory"
+    temporary_file=$(mktemp)
+    trap 'rm -f "$temporary_file"' EXIT HUP INT TERM
+    printf '%s\n' \
+        '[Desktop Entry]' \
+        'Type=Application' \
+        'Name=Xwayland Video Bridge' \
+        'Hidden=true' \
+        'X-GNOME-Autostart-enabled=false' \
+        "$managed_marker" > "$temporary_file"
+    install -m 644 "$temporary_file" "$override_file"
+
+    if bridge_is_running; then
+        pkill -TERM -f "$bridge_pattern" || true
+    fi
+
+    printf '%s\n' \
+        "Xwayland Video Bridge autostart is disabled for this user." \
+        "Legacy X11 applications may no longer be able to share Wayland windows."
+}
+
+enable_bridge() {
+    if is_managed_override; then
+        rm -f "$override_file"
+        printf '%s\n' \
+            "The Window Layouts autostart override was removed." \
+            "Xwayland Video Bridge will start at the next login."
+    elif [ -e "$override_file" ]; then
+        printf '%s\n' \
+            "The existing override is not managed by Window Layouts and was left unchanged:" \
+            "$override_file" >&2
+        exit 1
+    else
+        printf '%s\n' "Xwayland Video Bridge autostart is already enabled."
+    fi
+}
+
+case "$action" in
+    status) show_status ;;
+    disable) disable_bridge ;;
+    enable) enable_bridge ;;
+    -h|--help|help) usage ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

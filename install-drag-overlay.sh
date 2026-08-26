@@ -16,6 +16,7 @@ plasmoid_directory="$project_directory/packages/plasmoid"
 configurator_source="$project_directory/helpers/window-layouts-configurator-service"
 configurator_ui_source="$project_directory/cairo-dock-applet/window-layouts/configurator.py"
 updater_source="$project_directory/helpers/updater.py"
+bridge_workaround_source="$project_directory/helpers/xwayland-video-bridge-workaround"
 version_source="$project_directory/VERSION"
 logo_source="$project_directory/packages/plasmoid/contents/images/window-layouts.svg"
 guard_source="$project_directory/cairo-dock-applet/cairo-dock-unlock-guard"
@@ -23,9 +24,9 @@ package_id="windowlayoutsdragtargets"
 core_package_id="windowlayouts"
 legacy_package_id="windowlayoutsdragoverlay"
 runtime_cachebuster=$(date +%s%N)
-runtime_version="1.2.0-$runtime_cachebuster"
+runtime_version="1.2.1-$runtime_cachebuster"
 floating_package_id="windowlayoutsfloatingbutton"
-floating_runtime_version="1.2.0-$runtime_cachebuster"
+floating_runtime_version="1.2.1-$runtime_cachebuster"
 data_directory=$(qtpaths6 --writable-path GenericDataLocation)
 config_directory=$(qtpaths6 --writable-path ConfigLocation)
 
@@ -200,6 +201,12 @@ if [ -f "$installed_configurator" ]; then
             >/dev/null 2>&1 || true
     fi
 fi
+
+installed_tools_directory="$data_directory/window-layouts-kde/tools"
+install -d -m 755 "$installed_tools_directory"
+install -m 755 \
+    "$bridge_workaround_source" \
+    "$installed_tools_directory/xwayland-video-bridge-workaround"
 
 installed_cairo_applet="$config_directory/cairo-dock/third-party/window_layouts/window_layouts"
 if [ -f "$installed_cairo_applet" ]; then

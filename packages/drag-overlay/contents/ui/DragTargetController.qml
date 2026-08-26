@@ -978,6 +978,6 @@ QtObject {
     Component.onCompleted: {
         loadFeatureSettings();
         signalWindow = Workspace.activeWindow;
-        console.info("window-layouts-drag-overlay: Loaded input-transparent drag targets 1.2.0");
+        console.info("window-layouts-drag-overlay: Loaded input-transparent drag targets 1.2.1");
     }
 }

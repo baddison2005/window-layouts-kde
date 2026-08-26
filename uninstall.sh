@@ -7,6 +7,7 @@ set -eu
 
 data_directory=$(qtpaths6 --writable-path GenericDataLocation)
 configurator_directory="$data_directory/window-layouts-kde/configurator"
+tools_directory="$data_directory/window-layouts-kde/tools"
 configurator_service="$data_directory/dbus-1/services/org.example.WindowLayouts.Configurator.service"
 
 if command -v qdbus-qt6 >/dev/null 2>&1; then
@@ -78,6 +79,9 @@ rm -f \
     "$configurator_directory/window-layouts.svg" \
     "$configurator_service"
 rmdir "$configurator_directory" 2>/dev/null || true
+rm -f "$tools_directory/xwayland-video-bridge-workaround"
+rmdir "$tools_directory" 2>/dev/null || true
+rmdir "$data_directory/window-layouts-kde" 2>/dev/null || true
 
 if command -v dbus-send >/dev/null 2>&1; then
     dbus-send \

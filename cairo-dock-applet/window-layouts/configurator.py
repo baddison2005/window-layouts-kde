@@ -18,7 +18,7 @@ from gi.repository import Gdk, GLib, Gtk
 GRID_COLUMNS = 24
 GRID_ROWS = 12
 MAX_LAYOUTS = 20
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 PROJECT_URL = "https://github.com/baddison2005/window-layouts-kde"
 HELP_URL = f"{PROJECT_URL}/issues"
 RELEASES_URL = f"{PROJECT_URL}/releases"
@@ -559,6 +559,12 @@ class WindowLayoutsConfigurator(Gtk.Window):
         title = Gtk.Label(xalign=0)
         title.set_markup(f"<span size='xx-large'><b>Window Layouts {APP_VERSION}</b></span>")
         title_box.pack_start(title, False, False, 0)
+        slogan = Gtk.Label(xalign=0)
+        slogan.set_markup(
+            "<span size='large'><b>Your Workspace, Organized Your Way!</b></span>"
+        )
+        slogan.set_line_wrap(True)
+        title_box.pack_start(slogan, False, False, 0)
         description = Gtk.Label(
             label="Flexible window positioning and layouts for KDE Plasma Wayland.",
             xalign=0,

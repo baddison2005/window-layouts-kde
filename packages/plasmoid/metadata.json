@@ -9,13 +9,13 @@
         ],
         "BugReportUrl": "https://github.com/baddison2005/window-layouts-kde/issues",
         "Category": "Windows and Tasks",
-        "Description": "Choose fixed or custom layouts for the active window",
+        "Description": "Your Workspace, Organized Your Way!\nFlexible window positioning and layouts for KDE Plasma Wayland.",
         "EnabledByDefault": false,
         "Icon": "/images/window-layouts.svg",
         "Id": "org.example.windowlayouts",
         "License": "GPL-2.0-or-later",
         "Name": "Window Layouts",
-        "Version": "1.2.0",
+        "Version": "1.2.1",
         "Website": "https://github.com/baddison2005/window-layouts-kde"
     },
     "X-Plasma-API-Minimum-Version": "6.0"

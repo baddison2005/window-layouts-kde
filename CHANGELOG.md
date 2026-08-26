@@ -3,6 +3,23 @@
 All notable changes to Window Layouts are documented here. This project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-08-26
+
+### Changed
+
+- The Plasma and shared GTK About pages now show the project slogan above the
+  KDE Plasma Wayland description.
+- An optional, reversible Xwayland Video Bridge compatibility helper can
+  disable its user-session autostart when a transparent capture window blocks
+  desktop input. Window Layouts never applies this workaround automatically.
+
+### Fixed
+
+- The panel's Updates page now opens its own content instead of leaving the
+  previously selected configuration page visible.
+- The update confirmation dialog no longer assigns a read-only Qt 6 QML
+  `implicitWidth` property.
+
 ## [1.2.0] - 2026-08-26
 
 ### Added

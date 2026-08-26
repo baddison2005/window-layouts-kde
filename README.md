@@ -45,11 +45,11 @@ bars or rely on X11 window-management tools.
 - Built-in GitHub release checking and user-confirmed, checksum-verified updates
   from either configuration interface.
 
-Version **1.2.0** adds GitHub release checking and verified user-level updates,
-unifies About information and branding, prevents abandoned KConfig locks from
-blocking Apply, and hardens the Wayland drag overlay against intercepting mouse
-input after a move. Version 1.1.0 introduced multi-window Fill Display actions
-and their global shortcuts.
+Version **1.2.1** fixes the panel Updates page, adds the project slogan to both
+About interfaces, and provides an opt-in workaround for an Xwayland Video
+Bridge input issue. Version 1.2.0 added GitHub release checking and verified
+user-level updates, unified About information and branding, prevented abandoned
+KConfig locks from blocking Apply, and hardened the Wayland drag overlay.
 
 ## Screenshots
 
@@ -324,6 +324,37 @@ placed off-screen. If desktop input still appears blocked after dragging,
 disable **Show layout targets while dragging a window** and include the time of
 the incident with your bug report so the relevant KWin journal entries can be
 identified.
+
+### Xwayland Video Bridge blocks desktop clicks
+
+Xwayland Video Bridge is a separate KDE compatibility tool that exposes
+Wayland windows to legacy X11 screen-sharing applications. On affected systems,
+its transparent full-screen capture window may unexpectedly receive pointer
+input. A strong indicator is that desktop clicks work again after running:
+
+```bash
+pkill -TERM -f '^(/usr/bin/)?xwaylandvideobridge([[:space:]]|$)'
+```
+
+Window Layouts installs an opt-in helper that can disable the bridge's XDG
+autostart for the current user. This may prevent Discord or other X11
+applications from sharing Wayland windows, so the workaround is never enabled
+automatically:
+
+```bash
+~/.local/share/window-layouts-kde/tools/xwayland-video-bridge-workaround status
+~/.local/share/window-layouts-kde/tools/xwayland-video-bridge-workaround disable
+```
+
+Restore the KDE default at any time; the bridge will start again after the next
+login:
+
+```bash
+~/.local/share/window-layouts-kde/tools/xwayland-video-bridge-workaround enable
+```
+
+The helper only removes an autostart override that it created itself and
+refuses to overwrite unrelated user configuration.
 
 ## Support, bugs, and contributions
 

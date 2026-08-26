@@ -38,7 +38,7 @@ KCM.SimpleKCM {
     property string cfg_groupOrder: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"fillDisplay\",\"window\"]"
     property string cfg_groupOrderDefault: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"fillDisplay\",\"window\"]"
 
-    readonly property string currentVersion: "1.2.0"
+    readonly property string currentVersion: "1.2.1"
     readonly property string projectUrl: "https://github.com/baddison2005/window-layouts-kde"
     readonly property string helpUrl: `${projectUrl}/issues`
     readonly property string releasesUrl: `${projectUrl}/releases`
@@ -91,6 +91,14 @@ KCM.SimpleKCM {
                 Kirigami.Heading {
                     text: i18n("Window Layouts %1", page.currentVersion)
                     level: 1
+                }
+
+                Kirigami.Heading {
+                    Layout.fillWidth: true
+                    text: i18n("Your Workspace, Organized Your Way!")
+                    level: 3
+                    type: Kirigami.Heading.Type.Secondary
+                    wrapMode: Text.WordWrap
                 }
 
                 QQC2.Label {
@@ -186,7 +194,10 @@ KCM.SimpleKCM {
         onAccepted: page.runUpdater("install")
 
         contentItem: QQC2.Label {
-            implicitWidth: Kirigami.Units.gridUnit * 24
+            // Qt 6 exposes Control.implicitWidth as read-only here. Giving
+            // the dialog content an explicit width avoids a QML load failure
+            // when the Updates category is first opened.
+            width: Kirigami.Units.gridUnit * 24
             text: i18n("Your existing layouts and feature settings will be preserved.")
             wrapMode: Text.WordWrap
         }

@@ -153,6 +153,16 @@ The checksum detects corrupted or mismatched downloads; it is published beside
 the archive under the same GitHub release trust boundary. The updater never
 uses `sudo` and never changes the user's source checkout.
 
+### Xwayland Video Bridge compatibility helper
+
+`helpers/xwayland-video-bridge-workaround` is an explicit troubleshooting tool,
+not a Window Layouts background service. Its `disable` action creates a marked
+user-level XDG autostart override and stops the current bridge process; `enable`
+removes only that marked override. It refuses to replace an existing user
+override. The installer copies it to
+`~/.local/share/window-layouts-kde/tools/`, while Window Layouts itself never
+changes bridge state automatically because X11 screen sharing may require it.
+
 ### Floating button on Wayland
 
 `FloatingButton.qml` owns a `PlasmaCore.Dialog` rather than an application
@@ -379,7 +389,7 @@ After the release commit and tag exist, build the two assets required by the
 in-app updater from that exact tag:
 
 ```bash
-scripts/build-release-artifacts.sh v1.2.0 /tmp/window-layouts-v1.2.0
+scripts/build-release-artifacts.sh v1.2.1 /tmp/window-layouts-v1.2.1
 ```
 
 Upload both the `.tar.gz` and `.tar.gz.sha256` files to the GitHub Release. The
