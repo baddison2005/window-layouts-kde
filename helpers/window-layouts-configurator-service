@@ -268,7 +268,7 @@ class LayoutStorage:
                 or (group_ids is not None and group_id not in group_ids)):
             group_id = ""
 
-        return {
+        validated = {
             "name": name.strip() or f"Custom Layout {index + 1}",
             "x": x,
             "y": y,
@@ -277,6 +277,10 @@ class LayoutStorage:
             "shortcutSlot": slot,
             "groupId": group_id,
         }
+        layout_id = candidate.get("id")
+        if isinstance(layout_id, str) and layout_id:
+            validated["id"] = layout_id
+        return validated
 
     @staticmethod
     def _validated_custom_groups(candidate):

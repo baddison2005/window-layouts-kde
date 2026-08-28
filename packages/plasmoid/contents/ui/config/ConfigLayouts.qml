@@ -7,11 +7,13 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls as QQC2
+import QtQuick.Dialogs as QtDialogs
 import QtQuick.Layouts
 import QtQuick.Window
 
 import org.kde.kcmutils as KCM
 import org.kde.kirigami as Kirigami
+import org.kde.plasma.plasma5support as Plasma5Support
 
 KCM.SimpleKCM {
     id: page
@@ -51,6 +53,17 @@ KCM.SimpleKCM {
     property bool loadingGroupOrder: false
     property bool updatingGroupOrder: false
     property int selectedGroupIndex: 0
+    readonly property string transferHelperPath: decodeURIComponent(
+        Qt.resolvedUrl("../../tools/layout-transfer.sh").toString().replace(/^file:\/\//, ""),
+    )
+    property bool transferBusy: false
+    property string transferOperation: ""
+    property string transferMessage: ""
+    property int transferMessageType: Kirigami.MessageType.Information
+    property string pendingImportedLayouts: "[]"
+    property string pendingImportedGroups: "[]"
+    property int pendingImportedLayoutCount: 0
+    property int pendingImportedGroupCount: 0
 
     implicitWidth: Kirigami.Units.gridUnit * 43
     implicitHeight: Kirigami.Units.gridUnit * 49
@@ -151,6 +164,65 @@ KCM.SimpleKCM {
         if (configurationWindow) {
             configurationWindow.title = i18n("Configure Window Layouts");
         }
+    }
+
+    function uuidV4() {
+        return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, character => {
+            const randomValue = Math.floor(Math.random() * 16);
+            const value = character === "x" ? randomValue : (randomValue & 3) | 8;
+            return value.toString(16);
+        });
+    }
+
+    function localFilePath(fileUrl) {
+        return decodeURIComponent(String(fileUrl).replace(/^file:\/\//, ""));
+    }
+
+    function shellQuote(value) {
+        return "'" + String(value).replace(/'/g, "'\\''") + "'";
+    }
+
+    function startLayoutTransfer(operation, fileUrl) {
+        if (transferBusy) {
+            return;
+        }
+        transferBusy = true;
+        transferOperation = operation;
+        transferMessageType = Kirigami.MessageType.Information;
+        transferMessage = operation === "import"
+            ? i18n("Validating custom layouts…")
+            : i18n("Exporting custom layouts…");
+        let command = shellQuote(transferHelperPath)
+            + " " + operation
+            + " " + shellQuote(localFilePath(fileUrl));
+        if (operation === "export") {
+            command += " " + shellQuote(encodeURIComponent(cfg_customLayouts || "[]"))
+                + " " + shellQuote(encodeURIComponent(cfg_customGroups || "[]"));
+        }
+        transferRunner.connectSource(command);
+    }
+
+    function showTransferError(message) {
+        transferBusy = false;
+        transferMessageType = Kirigami.MessageType.Error;
+        transferMessage = message;
+    }
+
+    function applyPendingImport() {
+        updatingCustomGroups = true;
+        cfg_customGroups = pendingImportedGroups;
+        updatingCustomGroups = false;
+        updatingConfiguration = true;
+        cfg_customLayouts = pendingImportedLayouts;
+        updatingConfiguration = false;
+        loadCustomGroups();
+        loadLayouts();
+        transferMessageType = Kirigami.MessageType.Positive;
+        transferMessage = i18n(
+            "Imported %1 custom layout(s) and %2 custom group(s). Select Apply or OK to save.",
+            pendingImportedLayoutCount,
+            pendingImportedGroupCount,
+        );
     }
 
     function roundedFraction(value, total) {
@@ -405,6 +477,9 @@ KCM.SimpleKCM {
             }
             usedSlots.push(shortcutSlot);
             customLayoutModel.append({
+                layoutId: typeof layout.id === "string" && layout.id.length > 0
+                    ? layout.id
+                    : uuidV4(),
                 layoutName: layout.name.trim() || i18n("Custom Layout %1", index + 1),
                 column,
                 row,
@@ -431,6 +506,7 @@ KCM.SimpleKCM {
         for (let index = 0; index < customLayoutModel.count; index += 1) {
             const layout = customLayoutModel.get(index);
             layouts.push({
+                id: layout.layoutId,
                 name: layout.layoutName.trim() || i18n("Custom Layout %1", index + 1),
                 x: roundedFraction(layout.column, gridColumns),
                 y: roundedFraction(layout.row, gridRows),
@@ -479,6 +555,7 @@ KCM.SimpleKCM {
         }
 
         customLayoutModel.append({
+            layoutId: uuidV4(),
             layoutName: i18n("Custom Layout %1", customLayoutModel.count + 1),
             column: 0,
             row: 0,
@@ -550,7 +627,7 @@ KCM.SimpleKCM {
         if (!trimmedName) {
             return;
         }
-        const groupId = `group-${Date.now().toString(36)}-${customGroupModel.count + 1}`;
+        const groupId = uuidV4();
         customGroupModel.append({
             groupId,
             groupName: trimmedName,
@@ -795,6 +872,33 @@ KCM.SimpleKCM {
                 Layout.fillWidth: true
                 text: i18np("%1 of 20 layout", "%1 of 20 layouts", customLayoutModel.count)
                 color: Kirigami.Theme.disabledTextColor
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                QQC2.Button {
+                    Layout.fillWidth: true
+                    text: i18n("Import…")
+                    icon.name: "document-import"
+                    enabled: !page.transferBusy
+                    onClicked: importFileDialog.open()
+                }
+
+                QQC2.Button {
+                    Layout.fillWidth: true
+                    text: i18n("Export…")
+                    icon.name: "document-export"
+                    enabled: !page.transferBusy
+                    onClicked: exportFileDialog.open()
+                }
+            }
+
+            Kirigami.InlineMessage {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: page.transferMessage
+                type: page.transferMessageType
             }
         }
 
@@ -1234,6 +1338,87 @@ KCM.SimpleKCM {
             width: renameGroupDialog.availableWidth
             placeholderText: i18n("Group name")
             maximumLength: 80
+        }
+    }
+
+    QtDialogs.FileDialog {
+        id: importFileDialog
+        title: i18n("Import Custom Layouts")
+        fileMode: QtDialogs.FileDialog.OpenFile
+        nameFilters: [i18n("JSON files (*.json)")]
+        onAccepted: page.startLayoutTransfer("import", selectedFile)
+    }
+
+    QtDialogs.FileDialog {
+        id: exportFileDialog
+        title: i18n("Export Custom Layouts")
+        fileMode: QtDialogs.FileDialog.SaveFile
+        defaultSuffix: "json"
+        nameFilters: [i18n("JSON files (*.json)")]
+        onAccepted: page.startLayoutTransfer("export", selectedFile)
+    }
+
+    QQC2.Dialog {
+        id: importConfirmation
+        anchors.centerIn: parent
+        width: Math.min(
+            page.width - Kirigami.Units.gridUnit * 2,
+            Kirigami.Units.gridUnit * 28
+        )
+        title: i18n("Replace custom layouts and groups?")
+        modal: true
+        standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
+        onAccepted: page.applyPendingImport()
+
+        contentItem: QQC2.Label {
+            width: importConfirmation.availableWidth
+            text: i18n(
+                "The file contains %1 custom layout(s) and %2 custom group(s). This replaces the current custom layouts and groups in the editor. Other settings are unchanged, and nothing is saved until you select Apply or OK.",
+                page.pendingImportedLayoutCount,
+                page.pendingImportedGroupCount,
+            )
+            wrapMode: Text.WordWrap
+        }
+    }
+
+    Plasma5Support.DataSource {
+        id: transferRunner
+        engine: "executable"
+
+        onNewData: function(sourceName, data) {
+            try {
+                const result = JSON.parse((data.stdout || "{}").trim());
+                if (result.error) {
+                    page.showTransferError(i18n(
+                        "Could not %1 custom layouts: %2",
+                        page.transferOperation,
+                        result.error,
+                    ));
+                } else if (page.transferOperation === "import") {
+                    page.transferBusy = false;
+                    page.pendingImportedLayouts = JSON.stringify(result.customLayouts || []);
+                    page.pendingImportedGroups = JSON.stringify(result.customGroups || []);
+                    page.pendingImportedLayoutCount = (result.customLayouts || []).length;
+                    page.pendingImportedGroupCount = (result.customGroups || []).length;
+                    page.transferMessage = "";
+                    importConfirmation.open();
+                } else {
+                    page.transferBusy = false;
+                    page.transferMessageType = Kirigami.MessageType.Positive;
+                    page.transferMessage = i18n(
+                        "Exported %1 custom layout(s) and %2 custom group(s).",
+                        result.layoutCount || 0,
+                        result.groupCount || 0,
+                    );
+                }
+            } catch (error) {
+                page.showTransferError(i18n(
+                    "Could not %1 custom layouts: %2",
+                    page.transferOperation,
+                    data.stderr || i18n("invalid transfer response"),
+                ));
+            }
+            disconnectSource(sourceName);
         }
     }
 }

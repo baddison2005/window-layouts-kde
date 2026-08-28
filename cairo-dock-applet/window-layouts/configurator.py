@@ -7,18 +7,27 @@
 
 import gi
 from pathlib import Path
+import sys
 import threading
-import time
+import uuid
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk
 
+try:
+    from layout_transfer import export_archive, import_archive
+except ImportError:
+    # Allow the configurator to run directly from a source checkout. Installed
+    # copies keep layout_transfer.py beside this module.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "helpers"))
+    from layout_transfer import export_archive, import_archive
+
 
 GRID_COLUMNS = 24
 GRID_ROWS = 12
 MAX_LAYOUTS = 20
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 PROJECT_URL = "https://github.com/baddison2005/window-layouts-kde"
 HELP_URL = f"{PROJECT_URL}/issues"
 RELEASES_URL = f"{PROJECT_URL}/releases"
@@ -316,6 +325,20 @@ class WindowLayoutsConfigurator(Gtk.Window):
 
         self.layout_count_label = Gtk.Label(xalign=0)
         left.pack_start(self.layout_count_label, False, False, 0)
+
+        transfer_buttons = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=6,
+        )
+        left.pack_start(transfer_buttons, False, False, 0)
+        import_button = self._button(
+            "Import…", "document-import", self._import_layouts
+        )
+        export_button = self._button(
+            "Export…", "document-export", self._export_layouts
+        )
+        transfer_buttons.pack_start(import_button, True, True, 0)
+        transfer_buttons.pack_start(export_button, True, True, 0)
 
         right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         content.pack_start(right, True, True, 0)
@@ -875,6 +898,7 @@ class WindowLayoutsConfigurator(Gtk.Window):
             round(layout["height"] * GRID_ROWS),
         ))
         return {
+            "id": layout.get("id") or str(uuid.uuid4()),
             "name": layout["name"],
             "column": column,
             "row": row,
@@ -1112,7 +1136,7 @@ class WindowLayoutsConfigurator(Gtk.Window):
         name = self._prompt_group_name("Create Custom Group")
         if not name:
             return
-        group_id = f"group-{time.monotonic_ns():x}"
+        group_id = str(uuid.uuid4())
         used_slots = {
             group.get("fillShortcutSlot") for group in self.custom_groups
         }
@@ -1299,6 +1323,7 @@ class WindowLayoutsConfigurator(Gtk.Window):
             1,
         )
         self.layouts.append({
+            "id": str(uuid.uuid4()),
             "name": f"Custom Layout {len(self.layouts) + 1}",
             "column": 0,
             "row": 0,
@@ -1336,10 +1361,11 @@ class WindowLayoutsConfigurator(Gtk.Window):
         self._rebuild_list()
         self._set_dirty()
 
-    def _apply(self, _button):
+    def _serialized_layouts(self):
         serialized = []
         for index, layout in enumerate(self.layouts):
             serialized.append({
+                "id": layout.get("id") or str(uuid.uuid4()),
                 "name": layout["name"].strip() or f"Custom Layout {index + 1}",
                 "x": round(layout["column"] / GRID_COLUMNS, 6),
                 "y": round(layout["row"] / GRID_ROWS, 6),
@@ -1348,6 +1374,118 @@ class WindowLayoutsConfigurator(Gtk.Window):
                 "shortcutSlot": layout.get("shortcut_slot", index + 1),
                 "groupId": layout.get("group_id", ""),
             })
+        return serialized
+
+    @staticmethod
+    def _json_file_filter():
+        file_filter = Gtk.FileFilter()
+        file_filter.set_name("JSON files")
+        file_filter.add_mime_type("application/json")
+        file_filter.add_pattern("*.json")
+        return file_filter
+
+    def _show_transfer_error(self, title, error):
+        message = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text=title,
+        )
+        message.format_secondary_text(str(error))
+        message.run()
+        message.destroy()
+
+    def _export_layouts(self, _button):
+        chooser = Gtk.FileChooserDialog(
+            title="Export Custom Layouts",
+            transient_for=self,
+            action=Gtk.FileChooserAction.SAVE,
+        )
+        chooser.add_buttons(
+            "Cancel", Gtk.ResponseType.CANCEL,
+            "Export", Gtk.ResponseType.OK,
+        )
+        chooser.set_do_overwrite_confirmation(True)
+        chooser.set_current_name("Window Layouts Custom Layouts.json")
+        chooser.add_filter(self._json_file_filter())
+        response = chooser.run()
+        destination = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+        chooser.destroy()
+        if not destination:
+            return
+        try:
+            export_archive(
+                destination,
+                self._serialized_layouts(),
+                self.custom_groups,
+            )
+        except Exception as error:
+            self._show_transfer_error("Could not export custom layouts", error)
+            return
+        self.status_label.set_text("Custom layouts exported.")
+
+    def _import_layouts(self, _button):
+        chooser = Gtk.FileChooserDialog(
+            title="Import Custom Layouts",
+            transient_for=self,
+            action=Gtk.FileChooserAction.OPEN,
+        )
+        chooser.add_buttons(
+            "Cancel", Gtk.ResponseType.CANCEL,
+            "Import", Gtk.ResponseType.OK,
+        )
+        chooser.add_filter(self._json_file_filter())
+        response = chooser.run()
+        source = chooser.get_filename() if response == Gtk.ResponseType.OK else None
+        chooser.destroy()
+        if not source:
+            return
+        try:
+            imported = import_archive(source)
+        except Exception as error:
+            self._show_transfer_error("Could not import custom layouts", error)
+            return
+
+        layout_count = len(imported["customLayouts"])
+        group_count = len(imported["customGroups"])
+        prompt = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text="Replace custom layouts and groups?",
+        )
+        prompt.format_secondary_text(
+            f"The file contains {layout_count} custom layout(s) and "
+            f"{group_count} custom group(s). This replaces the current custom "
+            "layouts and groups in the editor. Other settings are unchanged, "
+            "and nothing is saved until you select Apply or OK."
+        )
+        prompt.add_buttons(
+            "Cancel", Gtk.ResponseType.CANCEL,
+            "Replace", Gtk.ResponseType.OK,
+        )
+        response = prompt.run()
+        prompt.destroy()
+        if response != Gtk.ResponseType.OK:
+            return
+
+        self.custom_groups = list(imported["customGroups"])
+        self.layouts = [
+            self._to_grid(layout) for layout in imported["customLayouts"]
+        ]
+        self.selected_index = 0 if self.layouts else -1
+        self._rebuild_custom_group_combo()
+        self._rebuild_list()
+        self._set_dirty()
+        self.status_label.set_text(
+            f"Imported {layout_count} custom layout(s) and {group_count} "
+            "custom group(s). Select Apply or OK to save."
+        )
+
+    def _apply(self, _button):
+        serialized = self._serialized_layouts()
         try:
             self.save_callback(serialized)
             self.save_groups_callback(self.custom_groups)

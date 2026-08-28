@@ -3,6 +3,27 @@
 All notable changes to Window Layouts are documented here. This project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-08-28
+
+### Added
+
+- Portable JSON import and export for all custom layouts and named custom
+  groups from both the Plasma configuration page and the shared configurator
+  opened through Cairo-Dock or the floating button.
+- Compatibility with the Window Layouts for macOS v1.3.0 archive schema, plus
+  optional KDE shortcut-slot metadata for lossless KDE-to-KDE transfers.
+- Regression coverage for archive round trips, macOS-format imports, malformed
+  identifiers, invalid geometry, missing group references, limits, and both
+  configuration frontends.
+
+### Behavior
+
+- Import replaces only the draft custom layouts and groups after confirmation.
+  Feature settings, padding, menu-group order, and other preferences remain
+  unchanged, and **Cancel** discards an unapplied import.
+- Imported archives are size-limited and fully validated before use. Exports
+  are written atomically so an interrupted write cannot leave a partial file.
+
 ## [1.2.1] - 2026-08-26
 
 ### Changed

@@ -38,4 +38,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     assert not service.LayoutStorage._clear_abandoned_kconfig_lock(arguments)
     assert lock_path.exists()
 
+portable_id = "5cf56b58-e8c4-4b76-badc-9040f0457817"
+validated_layout = service.LayoutStorage._validated_layout({
+    "id": portable_id,
+    "name": "Portable",
+    "x": 0,
+    "y": 0,
+    "width": 0.5,
+    "height": 1,
+    "shortcutSlot": 3,
+    "groupId": "",
+}, 0)
+assert validated_layout["id"] == portable_id
+
 print("KConfig lock recovery checks passed")

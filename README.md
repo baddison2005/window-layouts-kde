@@ -17,6 +17,8 @@ bars or rely on X11 window-management tools.
   layouts.
 - Up to 20 named custom layouts, selected on a 24 × 12 visual grid.
 - Named custom-layout groups for organizing related layouts.
+- Import and export custom layouts and groups as portable JSON files compatible
+  with Window Layouts for macOS v1.3.0.
 - Fill the focused display with eligible visible windows using Horizontal
   Halves, Vertical Halves, Quarters, Thirds, or any non-empty named custom
   group. Windows are assigned front-to-back and layouts wrap when needed.
@@ -45,11 +47,10 @@ bars or rely on X11 window-management tools.
 - Built-in GitHub release checking and user-confirmed, checksum-verified updates
   from either configuration interface.
 
-Version **1.2.1** fixes the panel Updates page, adds the project slogan to both
-About interfaces, and provides an opt-in workaround for an Xwayland Video
-Bridge input issue. Version 1.2.0 added GitHub release checking and verified
-user-level updates, unified About information and branding, prevented abandoned
-KConfig locks from blocking Apply, and hardened the Wayland drag overlay.
+Version **1.3.0** adds portable JSON import and export for custom layouts and
+groups. Archives can be moved between the KDE and macOS editions; KDE-specific
+shortcut-slot assignments are retained when present. Import changes only the
+configuration draft until **Apply** or **OK** is selected.
 
 ## Screenshots
 
@@ -148,19 +149,20 @@ Use it to:
 3. Create, rename, and remove named custom groups, then assign custom layouts
    to them. The Saved layouts list displays group headings and keeps
    unassigned layouts together.
-4. Reorder the built-in layout and action groups shown by the menus.
-5. Enable or disable the floating button and on-screen drag targets.
-6. Choose whether drag targets appear at their matching layout zones or in a
+4. Import or export all custom layouts and groups as a portable JSON archive.
+5. Reorder the built-in layout and action groups shown by the menus.
+6. Enable or disable the floating button and on-screen drag targets.
+7. Choose whether drag targets appear at their matching layout zones or in a
    top-center strip, and whether the selected target style appears immediately.
-7. Choose the floating-button size: Small, Default, Big, or Extra big.
-8. Set optional layout padding in pixels. Padding is applied only to layout
+8. Choose the floating-button size: Small, Default, Big, or Extra big.
+9. Set optional layout padding in pixels. Padding is applied only to layout
    edges that do not touch the monitor's usable boundary.
-9. Assign or remove a global shortcut for every fixed and custom layout, every
+10. Assign or remove a global shortcut for every fixed and custom layout, every
    built-in or custom-group Fill Display action, or moving a window to the
    previous/next workspace or monitor, from **Layout Shortcuts**. KDE
    identifies conflicts and asks before reassigning a shortcut owned by
    another action.
-10. Check for and install stable releases from the panel's **Updates** page or
+11. Check for and install stable releases from the panel's **Updates** page or
     **About & Updates…** in the shared configurator opened through Cairo-Dock
     or the floating button.
 
@@ -201,6 +203,20 @@ for any fixed or custom layout, Fill Display choice, or action that moves the
 focused window to the previous or next workspace or monitor. If a proposed
 shortcut is already in use, KDE identifies the conflict and Window Layouts asks
 for confirmation before reassigning it.
+
+### Import and export custom layouts
+
+Open **Configure… → Custom Layouts** from the panel, Cairo-Dock, or floating
+button. Select **Export…** to save every custom layout and named custom group to
+a JSON file. Select **Import…**, choose an archive, review the reported layout
+and group counts, and confirm to replace the custom-layout draft.
+
+An import does not alter padding, feature switches, menu-group order, or other
+Window Layouts preferences. It is not committed until **Apply** or **OK** is
+selected, so **Cancel** safely discards it. Files use the same versioned schema
+as Window Layouts for macOS v1.3.0. KDE shortcut-slot metadata is included as
+an optional extension and is preserved on a KDE-to-KDE transfer; the shared
+layout geometry, names, identifiers, and group assignments remain portable.
 
 ### Floating button
 

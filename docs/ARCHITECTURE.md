@@ -33,6 +33,7 @@ menu.
 | `packages/floating-button` | QML | Wayland-native compact button and popup beside the focused window. |
 | `packages/drag-overlay` | QML | Input-transparent layout targets displayed during an interactive move. |
 | `helpers/window-layouts-configurator-service` | Python | D-Bus host and canonical settings synchronizer. |
+| `helpers/layout_transfer.py` | Python | Validates, imports, and atomically exports portable custom-layout archives. |
 | `helpers/updater.py` | Python | GitHub release discovery, checksum verification, safe extraction, and settings-preserving update installation. |
 | `cairo-dock-applet/window-layouts` | Python | Cairo-Dock sub-dock frontend and GTK configuration entry point. |
 | `cairo-dock-applet/window-layouts/configurator.py` | Python + GTK 3 | Shared layout, custom-group, shortcut, feature, and group-order editor. |
@@ -132,6 +133,27 @@ committing related values.
    applet to reload immediately. Cairo-Dock's periodic capability refresh is
    the fallback for changed custom layouts, custom-group assignments, or group
    order from any frontend.
+
+### Import or export custom layouts
+
+Both configuration frontends use `helpers/layout_transfer.py` as the archive
+authority. The Plasma page invokes its installed CLI through
+`packages/plasmoid/contents/tools/layout-transfer.sh`; the shared GTK
+configurator imports the same Python module directly.
+
+The version 1 archive has a top-level `schemaVersion`, `customLayouts`, and
+`customGroups`. Layout records carry UUID identifiers, normalized geometry,
+names, and an optional group UUID. Group records carry UUID identifiers and
+names. KDE additionally writes optional `shortcutSlot` and
+`fillShortcutSlot` fields. These extensions are ignored by the macOS decoder,
+while a macOS archive without them receives available KDE slots on import.
+
+Imports validate the schema, UUID uniqueness, names, normalized geometry,
+group references, slot uniqueness, record limits, and file-size limit before
+presenting a confirmation. Confirming replaces only the frontend's draft
+custom layouts and groups; the normal **Apply**, **OK**, and **Cancel** flow is
+unchanged. Export maps older non-UUID KDE identifiers to portable UUIDs and
+writes the JSON atomically.
 
 ### Check for and install an update
 
@@ -238,6 +260,20 @@ drag-target model, and Cairo-Dock `FIXED_LAYOUTS` together.
   the GTK editor uses the same `ShortcutStorage` methods directly.
 - `UpdateManager` callbacks supply the GTK About & Updates dialog without
   duplicating release or installation logic.
+- `_validated_layout()` retains portable layout UUIDs when saving, allowing a
+  later export to preserve identity and group membership.
+
+### Portable layout archive
+
+`helpers/layout_transfer.py`
+
+- `validate_archive()` normalizes and validates a decoded version 1 archive.
+- `build_archive()` converts saved KDE records into the portable schema and
+  retains KDE shortcut-slot extensions.
+- `import_archive()` enforces the input-size limit before decoding JSON.
+- `export_archive()` performs an atomic UTF-8 JSON write.
+- Its `import` and `export` CLI commands return machine-readable JSON for the
+  asynchronous Plasma configuration page.
 
 `helpers/org.example.WindowLayouts.Configurator.service.in` makes the Python
 service D-Bus activatable in the user session.
@@ -344,6 +380,7 @@ jq empty packages/*/metadata.json
 node tests/test-kwin-fill-display.js
 node tests/test-drag-overlay-failsafe.js
 python3 tests/test-config-lock-recovery.py
+python3 tests/test-layout-transfer.py
 python3 tests/test-updater.py
 python3 tests/test-release-metadata.py
 ```
@@ -365,6 +402,8 @@ Test at least these cases before release:
 - one and multiple virtual desktops, including wrap-around;
 - custom layout creation, reordering, removal, grouping, and Restore;
 - custom-group creation, rename, removal, assignment, and Unassigned display;
+- JSON export and confirmed import from both configuration frontends, including
+  KDE round trips and an archive produced by the macOS edition;
 - fixed and custom shortcuts, clearing shortcuts, and accepting or rejecting a
   detected conflict;
 - previous/next workspace and monitor shortcuts;
@@ -389,7 +428,7 @@ After the release commit and tag exist, build the two assets required by the
 in-app updater from that exact tag:
 
 ```bash
-scripts/build-release-artifacts.sh v1.2.1 /tmp/window-layouts-v1.2.1
+scripts/build-release-artifacts.sh v1.3.0 /tmp/window-layouts-v1.3.0
 ```
 
 Upload both the `.tar.gz` and `.tar.gz.sha256` files to the GitHub Release. The

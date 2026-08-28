@@ -38,7 +38,7 @@ KCM.SimpleKCM {
     property string cfg_groupOrder: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"fillDisplay\",\"window\"]"
     property string cfg_groupOrderDefault: "[\"halves\",\"quarters\",\"thirds\",\"twoThirds\",\"custom\",\"fillDisplay\",\"window\"]"
 
-    readonly property string currentVersion: "1.2.1"
+    readonly property string currentVersion: "1.3.0"
     readonly property string projectUrl: "https://github.com/baddison2005/window-layouts-kde"
     readonly property string helpUrl: `${projectUrl}/issues`
     readonly property string releasesUrl: `${projectUrl}/releases`

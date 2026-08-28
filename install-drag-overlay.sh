@@ -16,6 +16,7 @@ plasmoid_directory="$project_directory/packages/plasmoid"
 configurator_source="$project_directory/helpers/window-layouts-configurator-service"
 configurator_ui_source="$project_directory/cairo-dock-applet/window-layouts/configurator.py"
 updater_source="$project_directory/helpers/updater.py"
+layout_transfer_source="$project_directory/helpers/layout_transfer.py"
 bridge_workaround_source="$project_directory/helpers/xwayland-video-bridge-workaround"
 version_source="$project_directory/VERSION"
 logo_source="$project_directory/packages/plasmoid/contents/images/window-layouts.svg"
@@ -24,9 +25,9 @@ package_id="windowlayoutsdragtargets"
 core_package_id="windowlayouts"
 legacy_package_id="windowlayoutsdragoverlay"
 runtime_cachebuster=$(date +%s%N)
-runtime_version="1.2.1-$runtime_cachebuster"
+runtime_version="1.3.0-$runtime_cachebuster"
 floating_package_id="windowlayoutsfloatingbutton"
-floating_runtime_version="1.2.1-$runtime_cachebuster"
+floating_runtime_version="1.3.0-$runtime_cachebuster"
 data_directory=$(qtpaths6 --writable-path GenericDataLocation)
 config_directory=$(qtpaths6 --writable-path ConfigLocation)
 
@@ -187,6 +188,9 @@ if [ -f "$installed_configurator" ]; then
         "$updater_source" \
         "$(dirname -- "$installed_configurator")/updater.py"
     install -m 644 \
+        "$layout_transfer_source" \
+        "$(dirname -- "$installed_configurator")/layout_transfer.py"
+    install -m 644 \
         "$version_source" \
         "$(dirname -- "$installed_configurator")/VERSION"
     install -m 644 \
@@ -216,6 +220,9 @@ if [ -f "$installed_cairo_applet" ]; then
     install -m 644 \
         "$configurator_ui_source" \
         "$(dirname -- "$installed_cairo_applet")/configurator.py"
+    install -m 644 \
+        "$layout_transfer_source" \
+        "$(dirname -- "$installed_cairo_applet")/layout_transfer.py"
     install -m 644 \
         "$project_directory/cairo-dock-applet/window-layouts/auto-load.conf" \
         "$(dirname -- "$installed_cairo_applet")/auto-load.conf"
