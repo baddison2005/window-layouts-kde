@@ -48,4 +48,16 @@ auto_load = (
 assert f"version = {version}" in auto_load
 assert "author = Dr. Bret Addison" in auto_load
 
+upgrade_installer = (PROJECT_ROOT / "install-drag-overlay.sh").read_text(
+    encoding="utf-8"
+)
+clean_installer = (PROJECT_ROOT / "install.sh").read_text(encoding="utf-8")
+assert 'application_version=$(sed -n \'1p\' "$version_source")' in upgrade_installer
+assert 'runtime_version="$application_version-$runtime_cachebuster"' in upgrade_installer
+assert "previous_plasmoid_version" in upgrade_installer
+for installer in (upgrade_installer, clean_installer):
+    assert "plasma-plasmashell.service" in installer
+    assert "systemd-run" in installer
+    assert "previous_plasmoid_version" in installer
+
 print("Release metadata checks passed")

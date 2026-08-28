@@ -23,6 +23,27 @@ data_directory=$(qtpaths6 --writable-path GenericDataLocation)
 configurator_directory="$data_directory/window-layouts-kde/configurator"
 tools_directory="$data_directory/window-layouts-kde/tools"
 dbus_service_directory="$data_directory/dbus-1/services"
+application_version=$(sed -n '1p' "$version_source")
+case "$application_version" in
+    ''|*[!0-9.]*|.*|*.)
+        printf '%s\n' "VERSION must contain a semantic version" >&2
+        exit 1
+        ;;
+esac
+installed_plasmoid_metadata="$data_directory/plasma/plasmoids/org.example.windowlayouts/metadata.json"
+plasmoid_was_installed=false
+previous_plasmoid_version=""
+if [ -f "$installed_plasmoid_metadata" ]; then
+    plasmoid_was_installed=true
+    previous_plasmoid_version=$(python3 -c '
+import json
+import sys
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8"))["KPlugin"]["Version"])
+except (OSError, KeyError, TypeError, ValueError):
+    pass
+' "$installed_plasmoid_metadata")
+fi
 
 install -d -m 755 \
     "$configurator_directory" \
@@ -294,3 +315,26 @@ printf '%s\n' \
     "Window Layouts installed with its KWin actions enabled." \
     "The optional floating button and drag targets are installed but disabled by default." \
     "Run ./place-on-panel.sh to add its button to an existing Plasma panel."
+
+# The running Plasmoid retains the KPlugin metadata used by Plasma's native
+# About page. Schedule a refresh outside this installer's cgroup after an
+# upgrade so the updated version is visible without a full logout.
+if [ "$plasmoid_was_installed" = true ] \
+        && [ "$previous_plasmoid_version" != "$application_version" ]; then
+    refresh_unit="window-layouts-plasma-metadata-$(date +%s%N)"
+    if command -v systemd-run >/dev/null 2>&1 \
+            && systemd-run \
+                --user \
+                --quiet \
+                --collect \
+                --unit="$refresh_unit" \
+                --on-active=2s \
+                /usr/bin/systemctl --user restart plasma-plasmashell.service; then
+        printf '%s\n' \
+            "Plasma will refresh briefly so the About page shows version $application_version."
+    else
+        printf '%s\n' \
+            "Close Configure Window Layouts and log out once to refresh the About-page version." \
+            >&2
+    fi
+fi

@@ -3,6 +3,21 @@
 All notable changes to Window Layouts are documented here. This project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.1] - 2026-08-28
+
+### Fixed
+
+- Plasma now refreshes briefly after a version-changing upgrade so its native
+  About page reloads the installed Plasmoid metadata instead of showing the
+  version cached by the previous widget instance.
+- Runtime package cache-busters now derive their version from the canonical
+  `VERSION` file rather than another manually maintained version string.
+
+### Changed
+
+- Release-archive generation now refuses to proceed unless every component and
+  About metadata version matches the canonical `VERSION` file.
+
 ## [1.3.0] - 2026-08-28
 
 ### Added

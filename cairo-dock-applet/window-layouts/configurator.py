@@ -27,7 +27,7 @@ except ImportError:
 GRID_COLUMNS = 24
 GRID_ROWS = 12
 MAX_LAYOUTS = 20
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 PROJECT_URL = "https://github.com/baddison2005/window-layouts-kde"
 HELP_URL = f"{PROJECT_URL}/issues"
 RELEASES_URL = f"{PROJECT_URL}/releases"

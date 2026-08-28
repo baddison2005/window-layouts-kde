@@ -15,7 +15,7 @@
         "Id": "windowlayoutsfloatingbutton",
         "License": "GPL-2.0-or-later",
         "Name": "Window Layouts Floating Button",
-        "Version": "1.3.0",
+        "Version": "1.3.1",
         "Website": "https://github.com/baddison2005/window-layouts-kde"
     },
     "X-Plasma-API": "declarativescript",

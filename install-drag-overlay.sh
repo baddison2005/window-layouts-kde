@@ -24,12 +24,32 @@ guard_source="$project_directory/cairo-dock-applet/cairo-dock-unlock-guard"
 package_id="windowlayoutsdragtargets"
 core_package_id="windowlayouts"
 legacy_package_id="windowlayoutsdragoverlay"
+application_version=$(sed -n '1p' "$version_source")
+case "$application_version" in
+    ''|*[!0-9.]*|.*|*.)
+        printf '%s\n' "VERSION must contain a semantic version" >&2
+        exit 1
+        ;;
+esac
 runtime_cachebuster=$(date +%s%N)
-runtime_version="1.3.0-$runtime_cachebuster"
+runtime_version="$application_version-$runtime_cachebuster"
 floating_package_id="windowlayoutsfloatingbutton"
-floating_runtime_version="1.3.0-$runtime_cachebuster"
+floating_runtime_version="$application_version-$runtime_cachebuster"
 data_directory=$(qtpaths6 --writable-path GenericDataLocation)
 config_directory=$(qtpaths6 --writable-path ConfigLocation)
+installed_plasmoid_metadata="$data_directory/plasma/plasmoids/org.example.windowlayouts/metadata.json"
+previous_plasmoid_version=""
+if [ -f "$installed_plasmoid_metadata" ]; then
+    previous_plasmoid_version=$(python3 -c '
+import json
+import sys
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8"))["KPlugin"]["Version"])
+except (OSError, KeyError, TypeError, ValueError):
+    pass
+' "$installed_plasmoid_metadata")
+fi
+plasmoid_version_changed=false
 
 read_plugin_state() {
     key=$1
@@ -176,6 +196,9 @@ fi
 # of the floating-button KWin script.
 if kpackagetool6 --type Plasma/Applet --show org.example.windowlayouts >/dev/null 2>&1; then
     kpackagetool6 --type Plasma/Applet --upgrade "$plasmoid_directory"
+    if [ "$previous_plasmoid_version" != "$application_version" ]; then
+        plasmoid_version_changed=true
+    fi
 fi
 
 installed_configurator="$data_directory/window-layouts-kde/configurator/window-layouts-configurator-service"
@@ -511,3 +534,26 @@ printf '%s\n' \
     "Show zone targets immediately: $show_all_drag_targets" \
     "Show top-center targets immediately: $show_all_top_drag_targets" \
     "Layout group order: $group_order"
+
+# Plasma keeps an applet's KPlugin metadata in the running widget instance.
+# Refresh the shell only after a version-changing upgrade so its native About
+# page reads the newly installed metadata. A transient user service is used so
+# an in-app updater can finish before Plasma's service cgroup is restarted.
+if [ "$plasmoid_version_changed" = true ]; then
+    refresh_unit="window-layouts-plasma-metadata-$runtime_cachebuster"
+    if command -v systemd-run >/dev/null 2>&1 \
+            && systemd-run \
+                --user \
+                --quiet \
+                --collect \
+                --unit="$refresh_unit" \
+                --on-active=2s \
+                /usr/bin/systemctl --user restart plasma-plasmashell.service; then
+        printf '%s\n' \
+            "Plasma will refresh briefly so the About page shows version $application_version."
+    else
+        printf '%s\n' \
+            "Close Configure Window Layouts and log out once to refresh the About-page version." \
+            >&2
+    fi
+fi

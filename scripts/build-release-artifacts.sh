@@ -20,7 +20,21 @@ case "$version" in
         ;;
 esac
 
+ref_version=$(git -C "$project_directory" show "$release_ref:VERSION")
+if [ "$ref_version" != "$version" ]; then
+    printf '%s\n' \
+        "Release ref $release_ref contains version $ref_version, not $version" \
+        >&2
+    exit 1
+fi
+
 mkdir -p "$output_directory"
+
+# Refuse to create an updater archive if any frontend or Plasma's native About
+# metadata disagrees with the canonical VERSION file.
+PYTHONDONTWRITEBYTECODE=1 python3 \
+    "$project_directory/tests/test-release-metadata.py"
+
 git -C "$project_directory" archive \
     --format=tar.gz \
     --prefix="window-layouts-kde-v$version/" \

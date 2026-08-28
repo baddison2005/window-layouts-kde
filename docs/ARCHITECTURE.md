@@ -170,6 +170,11 @@ writes the JSON atomically.
 5. The extracted `VERSION` must match the GitHub tag before the updater runs
    `install-drag-overlay.sh`. That path preserves layouts, shortcuts, optional
    feature states, padding, target placement, and group order.
+6. When the installed Plasmoid version changes, the installer schedules a
+   transient user service to refresh `plasma-plasmashell.service` after the
+   installer exits. This makes Plasma's native About page rebuild its
+   `Plasmoid.metaData` from the updated package without killing an updater that
+   was launched inside the old shell service cgroup.
 
 The checksum detects corrupted or mismatched downloads; it is published beside
 the archive under the same GitHub release trust boundary. The updater never
@@ -428,11 +433,12 @@ After the release commit and tag exist, build the two assets required by the
 in-app updater from that exact tag:
 
 ```bash
-scripts/build-release-artifacts.sh v1.3.0 /tmp/window-layouts-v1.3.0
+scripts/build-release-artifacts.sh v1.3.1 /tmp/window-layouts-v1.3.1
 ```
 
 Upload both the `.tar.gz` and `.tar.gz.sha256` files to the GitHub Release. The
 archive's top-level directory, file names, `VERSION`, tag, and metadata versions
-must agree. `tests/test-release-metadata.py` checks the source-side version and
-About metadata; `UpdateManager` checks the release tag, asset names, checksum,
-safe archive structure, and packaged `VERSION` before installation.
+must agree. Artifact generation runs `tests/test-release-metadata.py` and stops
+if any frontend, runtime cache-buster, or About metadata disagrees with
+`VERSION`; `UpdateManager` checks the release tag, asset names, checksum, safe
+archive structure, and packaged `VERSION` before installation.

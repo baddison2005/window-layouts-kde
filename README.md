@@ -47,10 +47,11 @@ bars or rely on X11 window-management tools.
 - Built-in GitHub release checking and user-confirmed, checksum-verified updates
   from either configuration interface.
 
-Version **1.3.0** adds portable JSON import and export for custom layouts and
-groups. Archives can be moved between the KDE and macOS editions; KDE-specific
-shortcut-slot assignments are retained when present. Import changes only the
-configuration draft until **Apply** or **OK** is selected.
+Version **1.3.1** ensures Plasma's native About page refreshes its version after
+an upgrade. Version 1.3.0 added portable JSON import and export for custom
+layouts and groups. Archives can be moved between the KDE and macOS editions;
+KDE-specific shortcut-slot assignments are retained when present. Import
+changes only the configuration draft until **Apply** or **OK** is selected.
 
 ## Screenshots
 
@@ -279,8 +280,9 @@ new version includes the official Window Layouts update archive and checksum,
 select **Install** and confirm. Window Layouts downloads the archive over HTTPS,
 verifies its published SHA-256 checksum, rejects unsafe archive paths, and runs
 the settings-preserving user installer. It does not request `sudo` and does not
-modify a local source checkout. Close and reopen the configuration window after
-an update to load its newly installed About information.
+modify a local source checkout. After a version-changing upgrade, the Plasma
+panel briefly refreshes so its native About page loads the new metadata. The
+shared configurator displays the new version the next time it is opened.
 
 If a release does not contain the expected verified package, Window Layouts
 offers its GitHub release page for manual installation instead of executing an

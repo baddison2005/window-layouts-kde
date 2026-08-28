@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 
 
-CURRENT_VERSION = "1.3.0"
+CURRENT_VERSION = "1.3.1"
 REPOSITORY_URL = "https://github.com/baddison2005/window-layouts-kde"
 RELEASES_URL = f"{REPOSITORY_URL}/releases"
 LATEST_RELEASE_API = (
