@@ -55,6 +55,7 @@ The user configuration is stored in `kwinrc`. `LayoutStorage` in
 | Show all top targets | `Script-windowlayoutsdragtargets/ShowAllTopTargets` | Panel config |
 | Floating button size | `Script-windowlayoutsfloatingbutton/ButtonSize` | Panel config |
 | Layout padding | `Script-windowlayouts/LayoutPadding` | Drag-target preview, panel config |
+| Application launch mappings | `Script-windowlayouts/ApplicationMappings` | Shared mapping editor; read directly by KWin |
 
 Global shortcuts are owned by KDE's `org.kde.kglobalaccel` service rather than
 `kwinrc`. Fixed layouts use stable action IDs. Each custom-layout record stores
@@ -73,6 +74,37 @@ The D-Bus service writes both the KWin and panel copies whenever a shared GTK
 configuration window applies changes.
 
 ## Important flows
+
+### Place a freshly launched application's first ready window
+
+`helpers/application_mappings.py` validates up to 100 mappings and builds the
+shared GTK editor. Plasma and the GTK configurator open it through
+`ShowApplicationMappings` on the configurator D-Bus service. Its explicit Save
+persists only `ApplicationMappings` and reconfigures KWin; it never commits a
+frontend's other settings drafts. Custom layouts use `custom:<stable ID>`;
+fixed layouts use their existing action IDs. Monitor connectors use KWin
+output names rather than screen indices. Portable layout archives exclude
+these machine-local mappings.
+
+The action script listens to `workspace.windowAdded`. For matching application
+IDs it serializes `InspectLaunchProcess` requests per application. This
+stateless D-Bus method reads only `/proc/<pid>/stat` to return PID/start-tick
+identities and check whether any previously observed process is still alive.
+The KWin script owns session state, which survives configurator restarts and
+window closure. Windows open when settings are saved, plus additions during a
+30-second script-start grace period, seed a consumed launch without moving.
+No process command lines or document contents are inspected.
+
+A single lazy 250 ms QTimer polls pending launches for at most five minutes.
+Candidates must be normal, movable, resizable, non-transient, non-modal,
+paint-ready, non-minimized, non-full-screen windows with stable geometry/title
+for one second. Recognized launcher/chooser titles and user-excluded title
+fragments are skipped. Document mode also requires title/role evidence or a
+launcher-to-editor transition. KWin does not expose macOS-style accessibility
+document attributes; required title fragments provide explicit matching for
+unusual applications. A readiness match applies existing padding and usable
+output area calculations exactly once, retaining Restore geometry. Missing
+outputs or removed layout IDs consume the launch without moving a window.
 
 ### Apply a layout
 
@@ -175,6 +207,9 @@ writes the JSON atomically.
    installer exits. This makes Plasma's native About page rebuild its
    `Plasmoid.metaData` from the updated package without killing an updater that
    was launched inside the old shell service cgroup.
+7. Version-changing in-app upgrades also schedule a delayed configurator Quit
+   after eight seconds. The installer can return before its host exits, and
+   the next D-Bus request activates the copied service with the new methods.
 
 The checksum detects corrupted or mismatched downloads; it is published beside
 the archive under the same GitHub release trust boundary. The updater never
@@ -383,6 +418,9 @@ python3 -m py_compile \
 xmllint --noout packages/*/contents/config/main.xml
 jq empty packages/*/metadata.json
 node tests/test-kwin-fill-display.js
+node tests/test-kwin-application-mappings.js
+python3 tests/test-application-mappings.py
+python3 tests/test-upgrade-launch-mappings.py
 node tests/test-drag-overlay-failsafe.js
 python3 tests/test-config-lock-recovery.py
 python3 tests/test-layout-transfer.py
@@ -412,6 +450,8 @@ Test at least these cases before release:
 - fixed and custom shortcuts, clearing shortcuts, and accepting or rejecting a
   detected conflict;
 - previous/next workspace and monitor shortcuts;
+- application launch mappings with fixed/custom layouts, a second monitor,
+  launcher-to-document transitions, title filters, and subsequent windows;
 - built-in and named custom-group Fill Display actions from every frontend,
   including shortcut assignment, mixed eligible/ineligible windows, wrapping,
   and per-window Restore;
@@ -429,11 +469,18 @@ Test at least these cases before release:
 
 ## Release artifacts
 
+`python3 tests/run-launch-mappings-integration.py` runs the launch-mapping
+acceptance test in an isolated headless KWin/Wayland and D-Bus session with
+temporary XDG settings. It exercises the actual shared editor, including app
+discovery, Add, Save, Remove and Cancel, then verifies a launcher stays put,
+the document moves to the specified second display, and a later window stays
+put. It requires the normal KDE runtime, dbus-python, GTK 3 and PySide6.
+
 After the release commit and tag exist, build the two assets required by the
 in-app updater from that exact tag:
 
 ```bash
-scripts/build-release-artifacts.sh v1.3.1 /tmp/window-layouts-v1.3.1
+scripts/build-release-artifacts.sh v1.4.0 /tmp/window-layouts-v1.4.0
 ```
 
 Upload both the `.tar.gz` and `.tar.gz.sha256` files to the GitHub Release. The

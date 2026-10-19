@@ -53,6 +53,7 @@ install -m 755 "$configurator_source" "$configurator_directory/window-layouts-co
 install -m 644 "$configurator_ui_source" "$configurator_directory/configurator.py"
 install -m 644 "$updater_source" "$configurator_directory/updater.py"
 install -m 644 "$layout_transfer_source" "$configurator_directory/layout_transfer.py"
+install -m 644 "$project_dir/helpers/application_mappings.py" "$configurator_directory/application_mappings.py"
 install -m 644 "$version_source" "$configurator_directory/VERSION"
 install -m 644 "$logo_source" "$configurator_directory/window-layouts.svg"
 install -m 755 \

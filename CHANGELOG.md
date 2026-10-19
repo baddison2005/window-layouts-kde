@@ -3,6 +3,27 @@
 All notable changes to Window Layouts are documented here. This project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-10-19
+
+### Added
+
+- Per-application fresh-launch mappings to a fixed or custom layout and a
+  named monitor, with one shared editor accessible from all configuration
+  frontends.
+- First eligible window and Document window readiness modes, a settling delay,
+  splash/dialog/launcher filtering, and literal title inclusion/exclusion
+  controls for unusual or localized launchers and template choosers.
+- Process-start identity tracking to avoid applying mappings to subsequent
+  windows, including when an app closes all windows but keeps running.
+- Startup grace and existing-window baselines, safe skipping of unavailable
+  monitors/layouts, stable custom-layout references, and regression coverage.
+
+### Fixed
+
+- In-app version upgrades retire the old configurator service after the
+  installer returns, so the new mapping editor and D-Bus methods are available
+  without logging out.
+
 ## [1.3.1] - 2026-08-28
 
 ### Fixed

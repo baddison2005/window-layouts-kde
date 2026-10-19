@@ -740,6 +740,22 @@ KCM.SimpleKCM {
 
         RowLayout {
             Layout.fillWidth: true
+            QQC2.Button {
+                text: i18n("Application Launch Mappings…")
+                icon.name: "preferences-system-windows"
+                onClicked: mappingRunner.connectSource(
+                    "qdbus-qt6 org.example.WindowLayouts.Configurator /org/example/WindowLayouts/Configurator org.example.WindowLayouts.Configurator.ShowApplicationMappings",
+                )
+            }
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: i18n("Choose a layout and monitor for a freshly launched application. Mappings have their own Save button.")
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: Kirigami.Units.largeSpacing
 
@@ -1419,6 +1435,18 @@ KCM.SimpleKCM {
                 ));
             }
             disconnectSource(sourceName);
+        }
+    }
+
+    Plasma5Support.DataSource {
+        id: mappingRunner
+        engine: "executable"
+        connectedSources: []
+        onNewData: (sourceName, data) => {
+            mappingRunner.disconnectSource(sourceName);
+            if (data["exit code"] !== 0) {
+                page.showTransferError(i18n("Could not open application mappings: %1", data.stderr || "D-Bus service unavailable"));
+            }
         }
     }
 }

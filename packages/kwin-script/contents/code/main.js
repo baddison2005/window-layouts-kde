@@ -61,11 +61,19 @@ const builtInFillGroups = [
 
 const originalGeometry = new Map();
 const watchedWindows = new Map();
+const launchWindowOrigins = new Map();
+const inspectedLaunchWindows = new Map();
 let lastActiveWindow = null;
 let customLayouts = [];
 let customGroups = {};
 let customGroupList = [];
 let layoutPadding = 0;
+let applicationMappings = [];
+const launchSessions = new Map();
+const launchQueues = new Map();
+const launchGraceUntil = Date.now() + 30000;
+let launchTimer = null;
+let mappingRevision = 0;
 
 function log(message) {
     console.info(`${LOG_PREFIX} ${message}`);
@@ -89,14 +97,26 @@ function copyRectangle(rectangle) {
     };
 }
 
-function watchWindow(window) {
+function watchWindow(window, launchBaseline = true) {
     if (!window || watchedWindows.has(window)) {
         return;
     }
 
     watchedWindows.set(window, true);
+    launchWindowOrigins.set(window, launchBaseline);
+    // Wayland app IDs and X11 resource classes can arrive after windowAdded.
+    for (const signal of [window.desktopFileNameChanged, window.windowClassChanged]) {
+        if (signal) {
+            signal.connect(() => inspectLaunchWindow(window, launchWindowOrigins.get(window)));
+        }
+    }
     window.closed.connect(() => {
+        for (const session of launchSessions.values()) {
+            session.candidates = session.candidates.filter(candidate => candidate.window !== window);
+        }
         watchedWindows.delete(window);
+        launchWindowOrigins.delete(window);
+        inspectedLaunchWindows.delete(window);
         originalGeometry.delete(window);
         if (lastActiveWindow === window) {
             lastActiveWindow = null;
@@ -258,6 +278,7 @@ function validatedCustomLayout(candidate, index) {
 
     return {
         name: configuredName || `Custom Layout ${index + 1}`,
+        id: typeof candidate.id === "string" ? candidate.id : "",
         x,
         y,
         width,
@@ -423,8 +444,228 @@ function customFillLayouts(groupId) {
     return customLayouts.filter(layout => layout.groupId === groupId);
 }
 
+function applicationIdentity(value) {
+    return String(value || "").trim().replace(/\.desktop$/i, "").toLowerCase();
+}
+
+function mappingForWindow(window) {
+    const desktopId = applicationIdentity(window.desktopFileName);
+    const wmClass = applicationIdentity(window.resourceClass);
+    return applicationMappings.find(mapping => desktopId
+        ? applicationIdentity(mapping.applicationId) === desktopId
+        : applicationIdentity(mapping.applicationId) === wmClass
+            || (mapping.wmClass && applicationIdentity(mapping.wmClass) === wmClass));
+}
+
+function loadApplicationMappings() {
+    let parsed = [];
+    try {
+        parsed = JSON.parse(String(readConfig("ApplicationMappings", "[]")));
+    } catch (error) {
+        log(`Could not parse application mappings: ${error}`);
+    }
+    const mappings = Array.isArray(parsed) ? parsed.slice(0, 100).filter(mapping =>
+        mapping && typeof mapping.applicationId === "string" && mapping.applicationId.trim()
+        && typeof mapping.layoutId === "string" && mapping.layoutId
+        && typeof mapping.monitor === "string" && mapping.monitor
+        && ["firstEligibleWindow", "documentWindow"].indexOf(mapping.windowRequirement) >= 0
+        && typeof mapping.titleIncludes === "string"
+        && Array.isArray(mapping.excludedTitles)
+        && mapping.excludedTitles.every(title => typeof title === "string")
+    ) : [];
+    if (JSON.stringify(mappings) === JSON.stringify(applicationMappings)) {
+        return;
+    }
+    applicationMappings = mappings;
+    mappingRevision += 1;
+    for (const session of launchSessions.values()) {
+        session.pending = false;
+        session.candidates = [];
+    }
+    // Saving settings never moves windows that are already open. Their process
+    // identities remain remembered even if every window is subsequently closed.
+    workspace.windowList().forEach(window => {
+        launchWindowOrigins.set(window, true);
+        inspectLaunchWindow(window, true);
+    });
+}
+
+function inspectLaunchWindow(window, baseline = false) {
+    if (!window || window.deleted || !window.managed) {
+        return;
+    }
+    const mapping = mappingForWindow(window);
+    if (!mapping || !Number.isInteger(window.pid) || window.pid <= 0) {
+        return;
+    }
+    const key = applicationIdentity(mapping.applicationId);
+    const inspectionKey = `${mappingRevision}:${key}`;
+    if (inspectedLaunchWindows.get(window) === inspectionKey) {
+        return;
+    }
+    inspectedLaunchWindows.set(window, inspectionKey);
+    let queue = launchQueues.get(key);
+    if (!queue) {
+        queue = [];
+        launchQueues.set(key, queue);
+    }
+    queue.push({ window, pid: window.pid, baseline, revision: mappingRevision });
+    if (queue.length === 1) {
+        inspectNextLaunchWindow(key);
+    }
+}
+
+function inspectNextLaunchWindow(key) {
+    const queue = launchQueues.get(key);
+    if (!queue || queue.length === 0) {
+        launchQueues.delete(key);
+        return;
+    }
+    const entry = queue[0];
+    const previous = launchSessions.get(key);
+    // /proc start times distinguish a genuine new process from PID reuse. The
+    // service is stateless here, so restarting its settings window cannot rearm
+    // a launch. Serialize checks per application to avoid racing two windows.
+    callDBus(CONFIGURATOR_SERVICE, CONFIGURATOR_PATH, CONFIGURATOR_INTERFACE,
+        "InspectLaunchProcess", entry.pid,
+        JSON.stringify(previous ? previous.processes : []), encoded => {
+            try {
+                const result = JSON.parse(String(encoded));
+                if (entry.revision === mappingRevision && result.token) {
+                    let session = launchSessions.get(key);
+                    if (!result.previousAlive || !session) {
+                        session = {
+                            processes: [], candidates: [], pending: !entry.baseline,
+                            deadline: Date.now() + 300000,
+                        };
+                        launchSessions.set(key, session);
+                    }
+                    session.processes = result.processes;
+                    if (entry.baseline) {
+                        session.pending = false;
+                    } else if (session.pending && watchedWindows.has(entry.window) && !entry.window.deleted) {
+                        session.candidates.push({
+                            window: entry.window, signature: "", stableSince: Date.now(),
+                            initialCaption: String(entry.window.caption || ""),
+                            sawPrelude: false,
+                        });
+                        ensureLaunchTimer();
+                    }
+                }
+            } catch (error) {
+                log("Launch process could not be inspected; leaving window unchanged");
+            }
+            queue.shift();
+            inspectNextLaunchWindow(key);
+        });
+}
+
+function ensureLaunchTimer() {
+    if (!launchTimer) {
+        launchTimer = new QTimer();
+        launchTimer.interval = 250;
+        launchTimer.timeout.connect(placePendingLaunchWindows);
+    }
+    launchTimer.start();
+}
+
+function launchWindowReady(candidate, mapping, now, session) {
+    const window = candidate.window;
+    const caption = String(window.caption || "").trim();
+    const role = String(window.windowRole || "");
+    const prelude = /(^|[\s:—–_-])(splash|launcher|start[ _-]?cent(?:er|re)|welcome|templates?|choose (a |an )?(file|template|document)|open (a |an )?(file|document)|file[ _-]?(chooser|picker)|project (chooser|launcher))([\s:—–_-]|$)/i;
+    const excluded = prelude.test(caption) || prelude.test(role)
+        || mapping.excludedTitles.some(title => title && caption.toLowerCase().includes(title.toLowerCase()));
+    const eligible = isEligibleWindow(window)
+        && !window.dialog && !window.modal && !window.transient && !window.splash
+        && !window.minimized && !window.fullScreen && window.readyForPainting !== false
+        && !window.interactiveMove && !window.interactiveResize;
+    if (!eligible || excluded) {
+        candidate.sawPrelude = true;
+        session.sawPrelude = true;
+        candidate.stableSince = now;
+        candidate.signature = "";
+        return false;
+    }
+    const geometry = window.frameGeometry;
+    const signature = JSON.stringify([caption, role, geometry.x, geometry.y, geometry.width, geometry.height]);
+    if (signature !== candidate.signature) {
+        candidate.signature = signature;
+        candidate.stableSince = now;
+    }
+    if (geometry.width < 100 || geometry.height < 80 || now - candidate.stableSince < 1000) {
+        return false;
+    }
+    if (mapping.titleIncludes) {
+        return caption.toLowerCase().includes(mapping.titleIncludes.toLowerCase());
+    }
+    if (mapping.windowRequirement === "firstEligibleWindow") {
+        return true;
+    }
+    // KWin has no accessibility document attribute. Require positive evidence
+    // for a first document; otherwise wait for the launcher title to change or
+    // a later document window. A required title fragment can make this strict
+    // for applications with localized or unusual launcher titles.
+    const documentEvidence = /\.[a-z0-9]{1,10}(?:\s|$|[—–*\]])|\b(untitled|unsaved|new document|new drawing|new spreadsheet|new presentation)\b/i.test(caption)
+        || /document|editor|browser/i.test(role);
+    return documentEvidence
+        || (caption && caption !== mapping.applicationName
+            && ((candidate.sawPrelude && caption !== candidate.initialCaption)
+                || (session.sawPrelude && !candidate.sawPrelude)));
+}
+
+function placePendingLaunchWindows() {
+    const now = Date.now();
+    let waiting = false;
+    for (const [key, session] of launchSessions) {
+        if (!session.pending) {
+            continue;
+        }
+        if (now > session.deadline) {
+            session.pending = false;
+            session.candidates = [];
+            continue;
+        }
+        const mapping = applicationMappings.find(item => applicationIdentity(item.applicationId) === key);
+        if (!mapping) {
+            session.pending = false;
+            continue;
+        }
+        const layout = layouts.find(item => item.actionId === mapping.layoutId)
+            || customLayouts.find(item => item.id && `custom:${item.id}` === mapping.layoutId);
+        const output = (workspace.screenOrder || []).find(item => item.name === mapping.monitor);
+        // A removed custom layout or unplugged monitor must never send a
+        // window to an unrelated replacement. Consume this launch safely.
+        if (!layout || !output) {
+            session.pending = false;
+            session.candidates = [];
+            continue;
+        }
+        session.candidates = session.candidates.filter(candidate => !candidate.window.deleted);
+        const candidate = session.candidates.find(item => launchWindowReady(item, mapping, now, session));
+        if (!candidate) {
+            waiting = true;
+            continue;
+        }
+        const window = candidate.window;
+        rememberOriginalGeometry(window);
+        leaveSpecialWindowStates(window);
+        workspace.sendClientToScreen(window, output);
+        const desktop = window.desktops && window.desktops.length ? window.desktops[0]
+            : workspace.currentDesktopForScreen(output) || workspace.currentDesktop;
+        const area = workspace.clientArea(KWin.MaximizeArea, output, desktop);
+        window.frameGeometry = rectangleForLayout(area, layout);
+        session.pending = false;
+        session.candidates = [];
+    }
+    if (!waiting && launchTimer) {
+        launchTimer.stop();
+    }
+}
+
 function loadConfiguration() {
     loadCustomLayouts();
+    loadApplicationMappings();
     const configuredPadding = Number(readConfig("LayoutPadding", 0));
     layoutPadding = Number.isFinite(configuredPadding)
         ? clamp(Math.round(configuredPadding), 0, MAX_LAYOUT_PADDING)
@@ -794,7 +1035,14 @@ registerUserActionsMenu(window => ({
     ],
 }));
 
-workspace.windowList().forEach(watchWindow);
+workspace.windowList().forEach(window => watchWindow(window));
+if (workspace.windowAdded) {
+    workspace.windowAdded.connect(window => {
+        const baseline = Date.now() < launchGraceUntil;
+        watchWindow(window, baseline);
+        inspectLaunchWindow(window, baseline);
+    });
+}
 workspace.windowActivated.connect(rememberWindow);
 rememberWindow(workspace.activeWindow);
 options.configChanged.connect(loadConfiguration);

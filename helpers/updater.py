@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 
 
-CURRENT_VERSION = "1.3.1"
+CURRENT_VERSION = "1.4.0"
 REPOSITORY_URL = "https://github.com/baddison2005/window-layouts-kde"
 RELEASES_URL = f"{REPOSITORY_URL}/releases"
 LATEST_RELEASE_API = (
@@ -221,8 +221,8 @@ class UpdateManager:
                 raise UpdateError("The release package has no update installer")
             environment = os.environ.copy()
             # When called by the GTK configurator, quitting that same D-Bus
-            # service from its child installer would deadlock. The newly copied
-            # service is picked up the next time the configurator is opened.
+            # service from its child installer would deadlock. The installer
+            # schedules a delayed refresh after a version-changing upgrade.
             environment["WINDOW_LAYOUTS_SKIP_CONFIGURATOR_RESTART"] = "true"
             try:
                 completed = subprocess.run(

@@ -44,14 +44,52 @@ bars or rely on X11 window-management tools.
   size and position.
 - Settings shared between the panel, floating button, Cairo-Dock, and the
   configuration windows.
+- Application launch mappings: choose a fixed or custom layout and a monitor
+  for the first ready window after a fresh application launch, with a document
+  mode and title filters for launchers and choosers.
 - Built-in GitHub release checking and user-confirmed, checksum-verified updates
   from either configuration interface.
 
-Version **1.3.1** ensures Plasma's native About page refreshes its version after
-an upgrade. Version 1.3.0 added portable JSON import and export for custom
-layouts and groups. Archives can be moved between the KDE and macOS editions;
-KDE-specific shortcut-slot assignments are retained when present. Import
-changes only the configuration draft until **Apply** or **OK** is selected.
+Version **1.4.0** adds application launch mappings with a target layout,
+monitor, and window readiness options. Portable custom-layout archives remain
+compatible with the macOS edition.
+
+## Application launch mappings
+
+Open **Configure Window Layouts → Application Launch Mappings…** in the panel
+configuration, or **Application Mappings…** in the shared configurator opened
+from the floating button or Cairo-Dock. Add an installed application, select a
+fixed or saved custom layout and monitor connector, then select **Save** in the
+mapping window. This editor saves mappings separately from other layout drafts.
+Save new custom layouts with **Apply** before assigning them to an application.
+
+- **First eligible window** waits for a stable, movable, resizable application
+  window. Splash screens, transient/modal dialogs, file choosers, recognized
+  launcher titles, minimized windows, and full-screen windows are skipped.
+- **Document window** additionally waits for document evidence in the window
+  role/title (including named files and untitled documents), or a transition
+  from a launcher to an editor. It waits up to five minutes while a user
+  chooses a document or template.
+- **Required title text** and **Ignore titles containing** let you match an
+  unusual or localized application. Matches are case-insensitive literal text;
+  excluded fragments are separated by semicolons. KDE does not expose a
+  universal document-ready attribute, so use these controls if an application's
+  launch screen looks like a normal editor or its document is not recognized.
+- Monitor connectors are matched by name, independent of monitor order.
+  Unplugged monitors and removed custom layouts are skipped. Custom mappings
+  refer to stable layout IDs, so renaming or reordering a layout is safe.
+- Existing windows are never repositioned when settings are saved or the
+  script reloads. There is a 30-second startup grace period to leave restored
+  session windows alone. A mapping applies once per application launch; later
+  windows, including reopening a window in a process that is still running,
+  are left alone. Process start times distinguish reused PIDs. Apps that keep
+  a background process running must fully quit before a mapping rearms.
+
+Mappings use the application's desktop ID, with its startup WM_CLASS as a
+fallback when KWin has no desktop ID. You can also enter an ID or WM_CLASS
+manually. Applications whose launchers and editors advertise different IDs
+should be mapped using the editor's identity. Mappings are local settings and
+are not included in portable custom-layout exports.
 
 ## Screenshots
 

@@ -8,6 +8,7 @@
 import gi
 from pathlib import Path
 import sys
+import subprocess
 import threading
 import uuid
 
@@ -27,7 +28,7 @@ except ImportError:
 GRID_COLUMNS = 24
 GRID_ROWS = 12
 MAX_LAYOUTS = 20
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.4.0"
 PROJECT_URL = "https://github.com/baddison2005/window-layouts-kde"
 HELP_URL = f"{PROJECT_URL}/issues"
 RELEASES_URL = f"{PROJECT_URL}/releases"
@@ -524,6 +525,10 @@ class WindowLayoutsConfigurator(Gtk.Window):
             "About & Updates…", "help-about", self._show_about
         )
         footer.pack_start(about_button, False, False, 0)
+        mappings_button = self._button(
+            "Application Mappings…", "preferences-system-windows", self._show_application_mappings
+        )
+        footer.pack_start(mappings_button, False, False, 0)
         self.status_label = Gtk.Label(xalign=0)
         footer.pack_start(self.status_label, True, True, 0)
         self.ok_button = self._button("OK", "dialog-ok", self._ok)
@@ -542,6 +547,14 @@ class WindowLayoutsConfigurator(Gtk.Window):
         if callback is not None:
             button.connect("clicked", callback)
         return button
+
+    def _show_application_mappings(self, _button):
+        # Asynchronous: the same D-Bus service may own this GTK window.
+        subprocess.Popen([
+            "qdbus-qt6", "org.example.WindowLayouts.Configurator",
+            "/org/example/WindowLayouts/Configurator",
+            "org.example.WindowLayouts.Configurator.ShowApplicationMappings",
+        ])
 
     @staticmethod
     def _run_background(callback, finished_callback):

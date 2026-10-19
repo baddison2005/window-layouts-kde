@@ -202,7 +202,9 @@ if kpackagetool6 --type Plasma/Applet --show org.example.windowlayouts >/dev/nul
 fi
 
 installed_configurator="$data_directory/window-layouts-kde/configurator/window-layouts-configurator-service"
+configurator_refresh_required=false
 if [ -f "$installed_configurator" ]; then
+    previous_configurator_version=$(sed -n '1p' "$(dirname -- "$installed_configurator")/VERSION" 2>/dev/null || true)
     install -m 755 "$configurator_source" "$installed_configurator"
     install -m 644 \
         "$configurator_ui_source" \
@@ -213,6 +215,9 @@ if [ -f "$installed_configurator" ]; then
     install -m 644 \
         "$layout_transfer_source" \
         "$(dirname -- "$installed_configurator")/layout_transfer.py"
+    install -m 644 \
+        "$project_directory/helpers/application_mappings.py" \
+        "$(dirname -- "$installed_configurator")/application_mappings.py"
     install -m 644 \
         "$version_source" \
         "$(dirname -- "$installed_configurator")/VERSION"
@@ -226,6 +231,8 @@ if [ -f "$installed_configurator" ]; then
             /org/example/WindowLayouts/Configurator \
             org.example.WindowLayouts.Configurator.Quit \
             >/dev/null 2>&1 || true
+    elif [ "$previous_configurator_version" != "$application_version" ]; then
+        configurator_refresh_required=true
     fi
 fi
 
@@ -555,5 +562,25 @@ if [ "$plasmoid_version_changed" = true ]; then
         printf '%s\n' \
             "Close Configure Window Layouts and log out once to refresh the About-page version." \
             >&2
+    fi
+fi
+
+# An in-app update runs inside the old configurator. Let its installer return
+# before retiring that service, so new D-Bus methods become available without
+# killing or deadlocking the update. A transient timer survives Plasma refresh.
+if [ "$configurator_refresh_required" = true ]; then
+    if command -v systemd-run >/dev/null 2>&1 \
+            && systemd-run \
+                --user --quiet --collect \
+                --unit="window-layouts-configurator-refresh-$runtime_cachebuster" \
+                --on-active=8s \
+                /usr/bin/qdbus-qt6 \
+                org.example.WindowLayouts.Configurator \
+                /org/example/WindowLayouts/Configurator \
+                org.example.WindowLayouts.Configurator.Quit; then
+        printf '%s\n' "The configuration service will refresh to load the updated application mappings."
+    else
+        printf '%s\n' \
+            "Log out and back in to load the updated configuration service and application mappings." >&2
     fi
 fi

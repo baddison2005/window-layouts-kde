@@ -21,6 +21,7 @@ from gi.repository import GLib, Gtk
 
 from configurator import WindowLayoutsConfigurator
 from updater import UpdateError, UpdateManager
+from application_mappings import create_mapping_dialog, inspect_launch_process, validated_mappings
 
 
 SERVICE_NAME = "org.example.WindowLayouts.Configurator"
@@ -158,6 +159,21 @@ QT_KEY_NAMES.update({
 
 class LayoutStorage:
     """Read, validate, and synchronize custom layouts across frontends."""
+
+    def load_application_mappings(self):
+        encoded = self._command_output([
+            "kreadconfig6", "--file", "kwinrc", "--group", "Script-windowlayouts",
+            "--key", "ApplicationMappings", "--default", "[]",
+        ])
+        return validated_mappings(encoded or "[]")
+
+    def save_application_mappings(self, mappings):
+        encoded = json.dumps(validated_mappings(mappings), separators=(",", ":"))
+        self._command_output([
+            "kwriteconfig6", "--file", "kwinrc", "--group", "Script-windowlayouts",
+            "--key", "ApplicationMappings", encoded,
+        ])
+        self._reconfigure_kwin()
 
     @staticmethod
     def _kwriteconfig_lock_path(arguments):
@@ -1000,6 +1016,7 @@ class ConfiguratorService(dbus.service.Object):
         self.storage = LayoutStorage()
         self.shortcuts = ShortcutStorage()
         self.updater = UpdateManager()
+        self.mapping_dialog = None
         self.window = WindowLayoutsConfigurator(
             self.storage.load,
             self._save_layouts,
@@ -1059,6 +1076,42 @@ class ConfiguratorService(dbus.service.Object):
     @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="")
     def Show(self):
         GLib.idle_add(self._show_window)
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="")
+    def ShowApplicationMappings(self):
+        GLib.idle_add(self._show_application_mappings)
+
+    def _show_application_mappings(self):
+        if self.mapping_dialog is not None:
+            self.mapping_dialog.present()
+            return False
+        try:
+            self.mapping_dialog = create_mapping_dialog(
+                self.window if self.window.get_visible() else None,
+                self.storage.load_application_mappings,
+                self.storage.save_application_mappings, self.storage.load,
+            )
+            self.mapping_dialog.connect("destroy", self._mapping_dialog_closed)
+            self.mapping_dialog.present()
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            message = Gtk.MessageDialog(
+                message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.CLOSE,
+                text=f"Could not open application mappings: {error}",
+            )
+            message.connect("response", lambda dialog, _response: dialog.destroy())
+            message.show_all()
+        return False
+
+    def _mapping_dialog_closed(self, _dialog):
+        self.mapping_dialog = None
+
+    @dbus.service.method(INTERFACE_NAME, in_signature="is", out_signature="s")
+    def InspectLaunchProcess(self, pid, previous):
+        try:
+            result = inspect_launch_process(int(pid), str(previous))
+        except (ValueError, TypeError):
+            result = {"token": "", "previousAlive": False, "processes": []}
+        return json.dumps(result, separators=(",", ":"))
 
     @dbus.service.method(INTERFACE_NAME, in_signature="", out_signature="")
     def Quit(self):
