@@ -50,20 +50,19 @@ bars or rely on X11 window-management tools.
 - Built-in GitHub release checking and user-confirmed, checksum-verified updates
   from either configuration interface.
 
-Version **1.4.1** fixes application launch mappings for apps with different
-window and desktop IDs, including Opera GX and Flatpak gedit. Newly saved
-mappings take effect on the next fresh launch, and the mapping editor flags
-unavailable monitor connectors. Use **First eligible window** for browsers,
-Steam, and Discord; Steam's sign-in window is skipped until its main window
-is ready. Portable custom-layout archives remain compatible with the macOS
-edition.
+Version **1.4.2** makes application launch mappings follow the physical monitor
+across HDMI and DisplayPort connections. Monitors are identified by
+manufacturer, model, and serial number, so another display cannot inherit a
+mapping simply by using the same port. Existing connector-only mappings need
+their intended monitor selected once in **Application Launch Mappings**.
+Portable custom-layout archives remain compatible with the macOS edition.
 
 ## Application launch mappings
 
 Open **Configure Window Layouts → Application Launch Mappings…** in the panel
 configuration, or **Application Mappings…** in the shared configurator opened
 from the floating button or Cairo-Dock. Add an installed application, select a
-fixed or saved custom layout and monitor connector, then select **Save** in the
+fixed or saved custom layout and physical monitor, then select **Save** in the
 mapping window. This editor saves mappings separately from other layout drafts.
 Save new custom layouts with **Apply** before assigning them to an application.
 
@@ -81,10 +80,15 @@ Save new custom layouts with **Apply** before assigning them to an application.
   excluded fragments are separated by semicolons. KDE does not expose a
   universal document-ready attribute, so use these controls if an application's
   launch screen looks like a normal editor or its document is not recognized.
-- Monitor connectors are matched by name, independent of monitor order.
-  The editor flags unavailable connectors so you can choose a connected monitor.
-  Unplugged monitors and removed custom layouts are skipped. Custom mappings
-  refer to stable layout IDs, so renaming or reordering a layout is safe.
+- Monitors are identified by manufacturer, model, and serial number. A mapping
+  follows its monitor between HDMI and DisplayPort, even if another monitor
+  takes the old connector. Missing or ambiguous monitors are skipped. If no
+  usable serial is reported, both the model and original connector must match;
+  the editor labels this limitation. Older connector-only mappings need their
+  intended monitor selected once in the mapping editor; ports alone cannot
+  identify which physical monitor was intended. Removed custom layouts are
+  skipped. Custom mappings refer to stable layout IDs, so renaming or
+  reordering a layout is safe.
 - Existing windows are never repositioned when settings are saved or the
   script reloads. There is a 30-second startup grace period to leave restored
   session windows alone. A mapping applies once per application launch; later
@@ -97,8 +101,9 @@ fallback when KWin's desktop ID has no exact mapping. Ambiguous class matches
 are skipped. If no startup class is supplied, a short window ID matching the
 last component of a reverse-DNS desktop ID (such as `org.gnome.gedit`) is also
 accepted when both window identities agree and the match is unambiguous.
-You can also enter an ID or WM_CLASS manually. Applications whose launchers and editors advertise different IDs
-should be mapped using the editor's identity. Mappings are local settings and
+You can also enter an ID or WM_CLASS manually. Applications whose launchers
+and editors advertise different IDs should be mapped using the editor's
+identity. Mappings are local settings and
 are not included in portable custom-layout exports.
 
 ## Screenshots
@@ -118,6 +123,25 @@ layouts.
 <p align="center">
   <a href="screenshots/readme/floating-button.png"><img src="screenshots/readme/floating-button.png" alt="Floating Window Layouts button beside a focused window" width="36%"></a>
   <a href="screenshots/readme/floating-button-menu.png"><img src="screenshots/readme/floating-button-menu.png" alt="Floating Window Layouts button menu with layout previews" width="39%"></a>
+</p>
+
+### Drag targets
+
+The centered top strip shows layout choices while a window is being dragged.
+
+<p align="center">
+  <a href="screenshots/readme/Layouts_targets_center_top_strip.png"><img src="screenshots/readme/Layouts_targets_center_top_strip.png" alt="Centered top strip of layout targets with a highlighted destination preview" width="960"></a>
+</p>
+
+Targets can also appear near their layout regions, with stacked choices where
+several regions share the same location.
+
+<p align="center">
+  <a href="screenshots/readme/Layouts_near_target2.png"><img src="screenshots/readme/Layouts_near_target2.png" alt="Stacked layout targets near the center of the screen with a highlighted destination preview" width="960"></a>
+</p>
+
+<p align="center">
+  <a href="screenshots/readme/Layouts_near_target.png"><img src="screenshots/readme/Layouts_near_target.png" alt="Top Right Third target beside its highlighted layout region during a window drag" width="960"></a>
 </p>
 
 ### Custom-layout configuration

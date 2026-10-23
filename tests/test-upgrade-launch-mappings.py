@@ -47,7 +47,11 @@ def scenario(previous_version, skip, fail=False):
         installed.mkdir(parents=True)
         (installed / "window-layouts-configurator-service").write_text("old service")
         (installed / "VERSION").write_text(previous_version + "\n")
-        mappings = '[{"applicationId":"preserve-me","monitor":"DP-1"}]'
+        mappings = json.dumps([
+            {"applicationId": "preserve-physical", "monitor": "HDMI-A-1",
+             "monitorIdentity": {"manufacturer": "LG Electronics", "model": "LG ULTRAGEAR+", "serial": "LG-test"}},
+            {"applicationId": "preserve-legacy", "monitor": "DP-1"},
+        ], separators=(",", ":"))
         subprocess.run(["kwriteconfig6", "--file", "kwinrc", "--group", "Script-windowlayouts",
                         "--key", "ApplicationMappings", mappings], env=env, check=True)
         completed = subprocess.run(["bash", str(PROJECT / "install-drag-overlay.sh")], env=env,
@@ -73,6 +77,7 @@ def scenario(previous_version, skip, fail=False):
 
 scenario("1.3.1", skip=True)
 scenario("1.4.0", skip=True)
+scenario("1.4.1", skip=True)
 scenario(CURRENT_VERSION, skip=True)
 scenario("1.3.1", skip=False)
 scenario("1.3.1", skip=True, fail=True)

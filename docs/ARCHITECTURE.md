@@ -82,9 +82,22 @@ shared GTK editor. Plasma and the GTK configurator open it through
 `ShowApplicationMappings` on the configurator D-Bus service. Its explicit Save
 persists only `ApplicationMappings` and reconfigures KWin; it never commits a
 frontend's other settings drafts. Custom layouts use `custom:<stable ID>`;
-fixed layouts use their existing action IDs. Monitor connectors use KWin
-output names rather than screen indices. Portable layout archives exclude
-these machine-local mappings.
+fixed layouts use their existing action IDs. Each mapping stores a
+`monitorIdentity` object containing KWin's manufacturer, model, and serial,
+plus the last connector in `monitor`. A usable serial permits port changes;
+otherwise both identity fields and connector must match. The runtime requires
+exactly one matching active output and never falls back to the connector for
+an absent or ambiguous serialized identity. Old connector-only rows are read
+and preserved but skipped until the user selects the intended physical monitor.
+Portable layout archives exclude these machine-local mappings.
+
+The editor queries KWin's own output identities through a short-lived child
+process running `application_mappings.py --monitors`. A unique D-Bus callback
+and temporary script read `workspace.screenOrder`; the helper runs and unloads
+only that script, without global reconfiguration. The child avoids reentering
+the GTK service loop and uses the same output fields as the placement runtime.
+A failed query offers no monitor choices rather than guessing from connector
+names. No additional runtime dependency is required.
 
 The action script listens to `workspace.windowAdded`. For matching application
 IDs it serializes `InspectLaunchProcess` requests per application. This
@@ -102,7 +115,8 @@ StartupWMClass also accept the final component of a reverse-DNS desktop ID
 when both the window desktop ID and class equal that component (Flatpak gedit).
 These aliases share the same ambiguity check; explicit class aliases are not
 overridden by an inferred short ID. The editor labels
-disconnected monitor connectors explicitly. Browser/chat/game-store apps use
+missing/ambiguous physical monitors and legacy mappings that need a monitor
+selected again explicitly. Browser/chat/game-store apps use
 First eligible window; Document window is for document editors.
 The window-added handler also re-reads mapping settings because KWin's generic
 options-change signal need not fire for script-only updates. When new rules
@@ -494,7 +508,7 @@ After the release commit and tag exist, build the two assets required by the
 in-app updater from that exact tag:
 
 ```bash
-scripts/build-release-artifacts.sh v1.4.1 /tmp/window-layouts-v1.4.1
+scripts/build-release-artifacts.sh v1.4.2 /tmp/window-layouts-v1.4.2
 ```
 
 Upload both the `.tar.gz` and `.tar.gz.sha256` files to the GitHub Release. The

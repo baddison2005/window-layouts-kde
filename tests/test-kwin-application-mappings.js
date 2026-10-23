@@ -11,12 +11,14 @@ function signal() {
     return { connect(fn) { callbacks.push(fn); }, emit(...args) { callbacks.forEach(fn => fn(...args)); } };
 }
 const source = fs.readFileSync(path.join(__dirname, "../packages/kwin-script/contents/code/main.js"), "utf8");
+const monitorIdentity = { manufacturer: "LG Electronics", model: "LG ULTRAGEAR+", serial: "LG-123" };
 function setup({ existing = [], custom = [], asyncDBus = false, arm = true, mappings = null } = {}) {
     let now = 0;
     let rules = mappings || [{ applicationId: "org.example.Editor", applicationName: "Editor", wmClass: "Editor",
-        layoutId: "WindowLayoutsRightHalf", monitor: "DP-2", windowRequirement: "documentWindow",
+        layoutId: "WindowLayoutsRightHalf", monitor: "DP-2", monitorIdentity, windowRequirement: "documentWindow",
         titleIncludes: "", excludedTitles: ["Getting Started"] }];
-    const outputs = [{ name: "DP-1" }, { name: "DP-2" }];
+    const outputs = [{ name: "DP-1", manufacturer: "Other", model: "Screen", serialNumber: "Other-123" },
+        { name: "DP-2", manufacturer: monitorIdentity.manufacturer, model: monitorIdentity.model, serialNumber: monitorIdentity.serial }];
     const windows = [...existing];
     const alive = new Set(existing.map(window => `${window.pid}:1`));
     const requests = [];
@@ -137,7 +139,7 @@ function placed(window) {
     unchanged(doc); app.tick(31000); app.settle(); unchanged(doc);
 }
 // Missing destination or removed custom layout is skipped for the whole launch.
-for (const change of [{ monitor: "UNPLUGGED" }, { layoutId: "custom:removed" }]) {
+for (const change of [{ monitorIdentity: { ...monitorIdentity, serial: "UNPLUGGED" } }, { layoutId: "custom:removed" }]) {
     const app = setup(); app.config(change);
     const doc = window(400, "doc.txt — Editor");
     app.add(doc); app.settle(); unchanged(doc);
@@ -207,7 +209,7 @@ for (const change of [{ monitor: "UNPLUGGED" }, { layoutId: "custom:removed" }])
 }
 // Exact desktop IDs take precedence; ambiguous class aliases do not move a window.
 {
-    const base = { applicationName: "Editor", wmClass: "SharedEditor", monitor: "DP-2",
+    const base = { applicationName: "Editor", wmClass: "SharedEditor", monitor: "DP-2", monitorIdentity,
         windowRequirement: "firstEligibleWindow", titleIncludes: "", excludedTitles: [] };
     const app = setup({ mappings: [
         { ...base, applicationId: "one", layoutId: "WindowLayoutsLeftHalf" },
@@ -220,7 +222,7 @@ for (const change of [{ monitor: "UNPLUGGED" }, { layoutId: "custom:removed" }])
 }
 // Flatpak gedit has no StartupWMClass and exposes only its short application ID.
 {
-    const base = { applicationName: "gedit", wmClass: "", monitor: "DP-2",
+    const base = { applicationName: "gedit", wmClass: "", monitor: "DP-2", monitorIdentity,
         layoutId: "WindowLayoutsRightHalf", windowRequirement: "firstEligibleWindow",
         titleIncludes: "", excludedTitles: [] };
     const rule = { ...base, applicationId: "org.gnome.gedit" };
@@ -254,9 +256,40 @@ for (const change of [{ monitor: "UNPLUGGED" }, { layoutId: "custom:removed" }])
 {
     const app = setup({ mappings: [] });
     app.config({ applicationId: "org.example.Editor", applicationName: "Editor", wmClass: "Editor",
-        layoutId: "WindowLayoutsRightHalf", monitor: "DP-2", windowRequirement: "firstEligibleWindow",
+        layoutId: "WindowLayoutsRightHalf", monitor: "DP-2", monitorIdentity, windowRequirement: "firstEligibleWindow",
         titleIncludes: "", excludedTitles: [] }, false);
     const fresh = window(1005, "Editor");
     app.add(fresh); app.settle(); placed(fresh);
+}
+// The LG follows port changes even when another monitor occupies its old port.
+{
+    const app = setup();
+    app.outputs[0].name = "DP-2";
+    app.outputs[1].name = "HDMI-A-1";
+    const doc = window(1100, "doc.txt");
+    app.add(doc); app.settle(); placed(doc);
+    assert.equal(doc.output, app.outputs[1]);
+}
+// Missing, ambiguous, and legacy identities never fall back to the old connector.
+for (const kind of ["missing", "duplicate", "legacy", "malformed"]) {
+    const app = setup();
+    if (kind === "missing") app.outputs[1].serialNumber = "Different-monitor";
+    if (kind === "duplicate") app.outputs.push({ ...app.outputs[1], name: "HDMI-A-1" });
+    if (kind === "legacy") app.config({ monitorIdentity: undefined });
+    if (kind === "malformed") app.config({ monitorIdentity: { serial: "LG-123" } });
+    const doc = window(1101, "doc.txt");
+    app.add(doc); app.settle(); unchanged(doc);
+}
+// No serial: require both model and connector, and never guess across ports.
+for (const serial of ["", "0", "unknown", "none", "n/a"]) {
+    const app = setup();
+    app.config({ monitorIdentity: { ...monitorIdentity, serial } });
+    app.outputs[1].serialNumber = serial;
+    const doc = window(1102, "doc.txt");
+    app.add(doc); app.settle(); placed(doc);
+    app.close(doc); app.alive.delete("1102:1");
+    app.outputs[1].name = "HDMI-A-1";
+    const next = window(1103, "next.txt");
+    app.add(next); app.settle(); unchanged(next);
 }
 process.stdout.write("KWin application launch mapping tests passed\n");

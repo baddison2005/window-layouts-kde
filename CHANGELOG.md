@@ -3,6 +3,22 @@
 All notable changes to Window Layouts are documented here. This project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.4.2] - 2026-10-23
+
+### Fixed
+
+- Application launch mappings identify monitors by manufacturer, model, and
+  serial number instead of connector name, so a mapped monitor follows HDMI /
+  DisplayPort changes and another display cannot inherit its mappings.
+- The editor shows monitor names and serials and flags missing or ambiguous
+  destinations. Monitors without usable serials require matching model and
+  connector; old connector-only mappings need the intended monitor selected once.
+
+### Documentation
+
+- Added screenshots of the centered top target strip and nearby layout targets
+  to the README.
+
 ## [1.4.1] - 2026-10-23
 
 ### Fixed

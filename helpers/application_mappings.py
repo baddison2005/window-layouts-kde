@@ -6,6 +6,40 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
+
+
+def validated_monitor_identity(value):
+    if not isinstance(value, dict):
+        raise ValueError("Choose a monitor again to save its physical identity.")
+    result = {}
+    for field in ("manufacturer", "model", "serial"):
+        text = value.get(field)
+        if not isinstance(text, str) or len(text) > 512 or any(ord(c) < 32 for c in text):
+            raise ValueError("Invalid monitor identity.")
+        result[field] = text.strip()
+    return result
+
+
+def has_monitor_serial(identity):
+    return identity["serial"].lower() not in ("", "0", "unknown", "none", "n/a")
+
+
+def matching_monitors(mapping, monitors):
+    """Never reinterpret a legacy connector as the intended physical display."""
+    identity = mapping.get("monitorIdentity")
+    if identity is None:
+        return []
+    return [monitor for monitor in monitors
+            if monitor["identity"] == identity and
+            (has_monitor_serial(identity) or monitor["connector"] == mapping["monitor"])]
+
+
+def monitor_label(monitor):
+    identity = monitor["identity"]
+    name = " ".join(filter(None, (identity["manufacturer"], identity["model"]))) or "Unnamed monitor"
+    detail = f"serial {identity['serial']}" if has_monitor_serial(identity) else "no serial; tied to this port"
+    return f"{name} — {detail} ({monitor['connector']})"
 
 MAX_MAPPINGS = 100
 FIXED_LAYOUTS = (
@@ -59,6 +93,8 @@ def validated_mappings(value):
         ):
             raise ValueError("Excluded titles must be a list of up to 30 nonempty title fragments.")
         item["excludedTitles"] = [title.strip() for title in excluded]
+        if "monitorIdentity" in record:
+            item["monitorIdentity"] = validated_monitor_identity(record["monitorIdentity"])
         result.append(item)
     return result
 
@@ -98,14 +134,79 @@ def inspect_launch_process(pid, encoded_previous, proc_root=Path("/proc")):
 
 
 def connected_monitors():
+    """Query KWin itself so editor identities exactly match placement identities.
+
+    Run the D-Bus callback in a child to avoid nesting GTK's service event loop.
+    No global reconfigure/start call is used, and the temporary script is removed.
+    """
     try:
-        completed = subprocess.run(["kscreen-doctor", "-j"], check=True,
-                                   capture_output=True, text=True, timeout=5)
-        outputs = json.loads(completed.stdout).get("outputs", [])
-        return [output["name"] for output in outputs
-                if output.get("connected") and output.get("enabled") and output.get("name")]
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        completed = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--monitors"],
+                                   check=True, capture_output=True, text=True, timeout=12)
+        monitors = json.loads(completed.stdout)
+        if not isinstance(monitors, list) or len(monitors) > 100:
+            return []
+        return [{"connector": row["connector"], "identity": validated_monitor_identity(row["identity"])}
+                for row in monitors if isinstance(row["connector"], str) and row["connector"]]
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
         return []
+
+
+def query_kwin_monitors():
+    import tempfile
+    import uuid
+    import dbus
+    import dbus.service
+    from dbus.mainloop.glib import DBusGMainLoop
+    from gi.repository import GLib
+
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    token = uuid.uuid4().hex
+    service = "org.example.WindowLayouts.MonitorQuery.q" + token
+    interface = "org.example.WindowLayouts.MonitorQuery"
+    name = dbus.service.BusName(service, bus=bus)
+    loop = GLib.MainLoop()
+    result = []
+    received = False
+
+    class Receiver(dbus.service.Object):
+        @dbus.service.method(interface, in_signature="s", out_signature="")
+        def Report(self, encoded):
+            nonlocal received
+            result[:] = json.loads(str(encoded))
+            received = True
+            loop.quit()
+
+    receiver = Receiver(name, "/MonitorQuery")
+    scripting = dbus.Interface(bus.get_object("org.kde.KWin", "/Scripting"), "org.kde.kwin.Scripting")
+    plugin = "windowlayouts-monitor-query-" + token
+    loaded = False
+    timeout = GLib.timeout_add(4000, lambda: (loop.quit(), False)[1])
+    try:
+        with tempfile.TemporaryDirectory(prefix="window-layouts-monitors-") as directory:
+            script = Path(directory) / "monitors.js"
+            script.write_text('''callDBus(SERVICE, "/MonitorQuery", INTERFACE, "Report",
+JSON.stringify((workspace.screenOrder || []).map(o => ({connector: o.name, identity: {
+manufacturer: String(o.manufacturer || "").trim(), model: String(o.model || "").trim(),
+serial: String(o.serialNumber || "").trim()}}))));'''
+                .replace("SERVICE", json.dumps(service)).replace("INTERFACE", json.dumps(interface)))
+            # KWin exposes one- and two-argument overloads; specify the signature.
+            number = int(bus.call_blocking("org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting",
+                                           "loadScript", "ss", (str(script), plugin), timeout=2))
+            if number < 0:
+                raise RuntimeError("Could not query KWin monitors")
+            loaded = True
+            runner = dbus.Interface(bus.get_object("org.kde.KWin", f"/Scripting/Script{number}"), "org.kde.kwin.Script")
+            runner.run(timeout=2)
+            if not received:
+                loop.run()
+            return result
+    finally:
+        if GLib.MainContext.default().find_source_by_id(timeout):
+            GLib.source_remove(timeout)
+        if loaded:
+            scripting.unloadScript(plugin, timeout=2)
+        receiver.remove_from_connection()
 
 
 def create_mapping_dialog(parent, load, save, load_layouts):
@@ -155,18 +256,27 @@ def create_mapping_dialog(parent, load, save, load_layouts):
 
     def refresh():
         names = dict(layout_choices())
-        monitors = set(connected_monitors())
-        unavailable = sorted({item["monitor"] for item in rows if item["monitor"] not in monitors})
-        status.set_text(
-            "Unavailable monitor(s): " + ", ".join(unavailable)
-            + ". These mappings will be skipped. Edit them to select a connected monitor."
-            if unavailable else ""
-        )
-        model.clear()
+        monitors = connected_monitors()
+        labels, issues = [], []
         for item in rows:
+            matches = matching_monitors(item, monitors)
+            if "monitorIdentity" not in item:
+                label = item["monitor"] + " (choose monitor again)"
+            elif len(matches) == 1:
+                label = monitor_label(matches[0])
+            else:
+                label = monitor_label({"connector": item["monitor"], "identity": item["monitorIdentity"]})
+                label += " (unavailable or ambiguous)"
+            labels.append(label)
+            if len(matches) != 1:
+                issues.append(label)
+        status.set_text("Mappings skipped until their monitor is selected or available: "
+                        + "; ".join(sorted(set(issues))) if issues else "")
+        model.clear()
+        for item, label in zip(rows, labels):
             model.append((item["applicationName"] or item["applicationId"],
                           names.get(item["layoutId"], "Unavailable custom layout"),
-                          item["monitor"] + (" (unavailable)" if item["monitor"] not in monitors else ""),
+                          label,
                           "Document window" if item["windowRequirement"] == "documentWindow"
                           else "First eligible window"))
 
@@ -203,11 +313,20 @@ def create_mapping_dialog(parent, load, save, load_layouts):
         if item.get("layoutId") and item["layoutId"] not in dict(choices):
             layout.append(item["layoutId"], "Unavailable custom layout (choose another)")
         layout.set_active_id(item.get("layoutId", choices[0][0]))
-        monitor = Gtk.ComboBoxText.new_with_entry()
-        for name in connected_monitors():
-            monitor.append_text(name)
-        monitor.get_child().set_text(item.get("monitor", ""))
-        if not item.get("monitor") and monitor.get_model().iter_n_children(None):
+        monitor = Gtk.ComboBoxText()
+        monitors = connected_monitors()
+        matches = matching_monitors(item, monitors)
+        for position, screen in enumerate(monitors):
+            monitor.append(str(position), monitor_label(screen))
+        if len(matches) == 1:
+            monitor.set_active_id(str(monitors.index(matches[0])))
+        elif item.get("monitor"):
+            # Preserve a disconnected saved identity when editing other fields.
+            label = (monitor_label({"connector": item["monitor"], "identity": item["monitorIdentity"]})
+                     if "monitorIdentity" in item else item["monitor"] + " — choose monitor again")
+            monitor.append("saved", label)
+            monitor.set_active_id("saved")
+        elif monitors:
             monitor.set_active(0)
         requirement = Gtk.ComboBoxText()
         requirement.append("firstEligibleWindow", "First eligible window")
@@ -218,7 +337,7 @@ def create_mapping_dialog(parent, load, save, load_layouts):
         excluded = Gtk.Entry(text="; ".join(item.get("excludedTitles", [])))
         excluded.set_placeholder_text("Optional: title fragments separated by semicolons")
         for row, (label, control) in enumerate((
-            ("Application", app), ("Layout", layout), ("Monitor connector", monitor),
+            ("Application", app), ("Layout", layout), ("Monitor", monitor),
             ("Wait for", requirement), ("Required title text", title), ("Ignore titles containing", excluded),
         )):
             grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
@@ -226,6 +345,9 @@ def create_mapping_dialog(parent, load, save, load_layouts):
             grid.attach(control, 1, row, 1, 1)
         hint = Gtk.Label(xalign=0, wrap=True, label=(
             "Select an installed application or enter its desktop ID / WM_CLASS. "
+            "Monitors with serial numbers follow port changes. Without a serial, "
+            "the model and connector must both match. Old connector-only mappings "
+            "need their intended monitor selected once. "
             "Missing monitors and deleted custom layouts are skipped. Document detection "
             "uses window roles and titles; required title text gives stricter control."
         ))
@@ -236,9 +358,16 @@ def create_mapping_dialog(parent, load, save, load_layouts):
         while editor.run() == Gtk.ResponseType.OK:
             app_id = app.get_active_id() or app.get_child().get_text().strip()
             app_name, wm_class = apps.get(app_id, (app_id, ""))
+            selection = monitor.get_active_id()
+            if selection is None or (selection == "saved" and "monitorIdentity" not in item):
+                error_label.set_text("Choose the intended monitor to save its physical identity.")
+                continue
+            screen = ({"connector": item["monitor"], "identity": item["monitorIdentity"]}
+                      if selection == "saved" else monitors[int(selection)])
             candidate = {
                 "applicationId": app_id, "applicationName": app_name, "wmClass": wm_class,
-                "layoutId": layout.get_active_id() or "", "monitor": monitor.get_child().get_text(),
+                "layoutId": layout.get_active_id() or "", "monitor": screen["connector"],
+                "monitorIdentity": screen["identity"],
                 "windowRequirement": requirement.get_active_id(), "titleIncludes": title.get_text(),
                 "excludedTitles": [text.strip() for text in excluded.get_text().split(";") if text.strip()],
             }
@@ -282,3 +411,7 @@ def create_mapping_dialog(parent, load, save, load_layouts):
     dialog.connect("response", response)
     dialog.show_all()
     return dialog
+
+
+if __name__ == "__main__" and sys.argv[1:] == ["--monitors"]:
+    print(json.dumps(query_kwin_monitors(), separators=(",", ":")))

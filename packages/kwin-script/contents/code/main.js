@@ -474,6 +474,25 @@ function mappingForWindow(window) {
     return aliases.length === 1 ? aliases[0] : null;
 }
 
+function monitorForMapping(mapping) {
+    const identity = mapping.monitorIdentity;
+    if (!identity || typeof identity !== "object"
+        || !["manufacturer", "model", "serial"].every(key =>
+            typeof identity[key] === "string" && identity[key].length <= 512
+            && identity[key] === identity[key].trim() && !/[\x00-\x1f]/.test(identity[key]))) {
+        // Old settings carry only a port. Never bind that port to whichever
+        // physical monitor happens to be plugged into it after an upgrade.
+        return null;
+    }
+    const serialized = !["", "0", "unknown", "none", "n/a"].includes(identity.serial.toLowerCase());
+    const matches = (workspace.screenOrder || []).filter(output =>
+        String(output.manufacturer || "").trim() === identity.manufacturer
+        && String(output.model || "").trim() === identity.model
+        && String(output.serialNumber || "").trim() === identity.serial
+        && (serialized || output.name === mapping.monitor));
+    return matches.length === 1 ? matches[0] : null;
+}
+
 function loadApplicationMappings(addedWindow = null) {
     let parsed = [];
     try {
@@ -656,11 +675,13 @@ function placePendingLaunchWindows() {
         }
         const layout = layouts.find(item => item.actionId === mapping.layoutId)
             || customLayouts.find(item => item.id && `custom:${item.id}` === mapping.layoutId);
-        const output = (workspace.screenOrder || []).find(item => item.name === mapping.monitor);
+        const output = monitorForMapping(mapping);
         // A removed custom layout or unplugged monitor must never send a
         // window to an unrelated replacement. Consume this launch safely.
         if (!layout || !output) {
-            log(`Launch mapping skipped for ${key}: ${!layout ? "layout unavailable" : `monitor ${mapping.monitor} unavailable`}`);
+            log(`Launch mapping skipped for ${key}: ${!layout ? "layout unavailable"
+                : !mapping.monitorIdentity ? "choose the intended monitor again (legacy connector-only mapping)"
+                : "monitor identity unavailable or ambiguous"}`);
             session.pending = false;
             session.candidates = [];
             continue;

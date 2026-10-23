@@ -105,7 +105,8 @@ def session():
             observer.write_text('''const timer = new QTimer(); timer.interval = 200;
 timer.timeout.connect(() => callDBus("org.example.LaunchAcceptance", "/org/example/LaunchAcceptance",
 "org.example.LaunchAcceptance", "Record", JSON.stringify({
-outputs: workspace.screenOrder.map(o => ({name:o.name, x:o.geometry.x, width:o.geometry.width})),
+outputs: workspace.screenOrder.map(o => ({name:o.name, x:o.geometry.x, width:o.geometry.width,
+identity:{manufacturer:String(o.manufacturer || "").trim(),model:String(o.model || "").trim(),serial:String(o.serialNumber || "").trim()}})),
 windows: workspace.windowList().map(w => ({caption:w.caption, app:w.desktopFileName,
 pid:w.pid, normal:w.normalWindow, transient:w.transient, modal:w.modal,
 x:w.frameGeometry.x, y:w.frameGeometry.y, width:w.frameGeometry.width, height:w.frameGeometry.height}))
@@ -123,7 +124,7 @@ x:w.frameGeometry.x, y:w.frameGeometry.y, width:w.frameGeometry.width, height:w.
             # Model Opera GX's installed desktop ID differing from the window's
             # nonempty app ID; matching must use the saved StartupWMClass.
             rule = {"applicationId": "launch-acceptance-desktop-entry", "applicationName": "Launch Acceptance",
-                    "wmClass": "org.example.LaunchAcceptance", "layoutId": "WindowLayoutsRightHalf", "monitor": output["name"],
+                    "wmClass": "org.example.LaunchAcceptance", "layoutId": "WindowLayoutsRightHalf", "monitor": output["name"], "monitorIdentity": output["identity"],
                     "windowRequirement": "documentWindow", "titleIncludes": "", "excludedTitles": []}
             env = dict(os.environ)
             env["PYTHONPATH"] = os.pathsep.join((str(PROJECT / "helpers"),
