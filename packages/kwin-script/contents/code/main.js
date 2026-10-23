@@ -451,13 +451,30 @@ function applicationIdentity(value) {
 function mappingForWindow(window) {
     const desktopId = applicationIdentity(window.desktopFileName);
     const wmClass = applicationIdentity(window.resourceClass);
-    return applicationMappings.find(mapping => desktopId
-        ? applicationIdentity(mapping.applicationId) === desktopId
-        : applicationIdentity(mapping.applicationId) === wmClass
-            || (mapping.wmClass && applicationIdentity(mapping.wmClass) === wmClass));
+    const exact = desktopId && applicationMappings.find(mapping =>
+        applicationIdentity(mapping.applicationId) === desktopId);
+    if (exact) {
+        return exact;
+    }
+    // XWayland/Chromium apps can expose a synthesized desktopFileName (e.g.
+    // "Opera GX" instead of "opera-gx"). StartupWMClass remains authoritative
+    // as a fallback even when that nonmatching desktop ID is nonempty.
+    const aliases = wmClass ? applicationMappings.filter(mapping => {
+        const id = applicationIdentity(mapping.applicationId);
+        if (id === wmClass || (mapping.wmClass && applicationIdentity(mapping.wmClass) === wmClass)) {
+            return true;
+        }
+        // Some desktop entries (e.g. Flatpak gedit) omit StartupWMClass while
+        // their windows expose the final component of the reverse-DNS ID.
+        // Require both window identities to agree and no explicit class alias.
+        const parts = id.split(".");
+        return !mapping.wmClass && parts.length >= 3 && parts.every(Boolean)
+            && desktopId === wmClass && parts[parts.length - 1] === wmClass;
+    }) : [];
+    return aliases.length === 1 ? aliases[0] : null;
 }
 
-function loadApplicationMappings() {
+function loadApplicationMappings(addedWindow = null) {
     let parsed = [];
     try {
         parsed = JSON.parse(String(readConfig("ApplicationMappings", "[]")));
@@ -474,9 +491,10 @@ function loadApplicationMappings() {
         && mapping.excludedTitles.every(title => typeof title === "string")
     ) : [];
     if (JSON.stringify(mappings) === JSON.stringify(applicationMappings)) {
-        return;
+        return false;
     }
     applicationMappings = mappings;
+    log(`Loaded ${applicationMappings.length} application launch mapping(s)`);
     mappingRevision += 1;
     for (const session of launchSessions.values()) {
         session.pending = false;
@@ -485,9 +503,13 @@ function loadApplicationMappings() {
     // Saving settings never moves windows that are already open. Their process
     // identities remain remembered even if every window is subsequently closed.
     workspace.windowList().forEach(window => {
+        if (window === addedWindow) {
+            return;
+        }
         launchWindowOrigins.set(window, true);
         inspectLaunchWindow(window, true);
     });
+    return true;
 }
 
 function inspectLaunchWindow(window, baseline = false) {
@@ -622,6 +644,7 @@ function placePendingLaunchWindows() {
             continue;
         }
         if (now > session.deadline) {
+            log(`Launch mapping timed out waiting for a ready window: ${key}`);
             session.pending = false;
             session.candidates = [];
             continue;
@@ -637,6 +660,7 @@ function placePendingLaunchWindows() {
         // A removed custom layout or unplugged monitor must never send a
         // window to an unrelated replacement. Consume this launch safely.
         if (!layout || !output) {
+            log(`Launch mapping skipped for ${key}: ${!layout ? "layout unavailable" : `monitor ${mapping.monitor} unavailable`}`);
             session.pending = false;
             session.candidates = [];
             continue;
@@ -655,6 +679,7 @@ function placePendingLaunchWindows() {
             : workspace.currentDesktopForScreen(output) || workspace.currentDesktop;
         const area = workspace.clientArea(KWin.MaximizeArea, output, desktop);
         window.frameGeometry = rectangleForLayout(area, layout);
+        log(`Launch mapping applied for ${key} on ${output.name}`);
         session.pending = false;
         session.candidates = [];
     }
@@ -1038,8 +1063,16 @@ registerUserActionsMenu(window => ({
 workspace.windowList().forEach(window => watchWindow(window));
 if (workspace.windowAdded) {
     workspace.windowAdded.connect(window => {
+        // KWin's generic options signal is not guaranteed for script-only
+        // changes. Re-read the saved rules at launch, excluding this new window
+        // from the existing-window baseline if settings changed since last use.
+        if (loadApplicationMappings(window)) {
+            loadCustomLayouts();
+        }
         const baseline = Date.now() < launchGraceUntil;
         watchWindow(window, baseline);
+        // windowActivated can have installed the watcher before windowAdded.
+        launchWindowOrigins.set(window, baseline);
         inspectLaunchWindow(window, baseline);
     });
 }

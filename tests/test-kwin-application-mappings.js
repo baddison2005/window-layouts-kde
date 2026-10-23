@@ -11,9 +11,9 @@ function signal() {
     return { connect(fn) { callbacks.push(fn); }, emit(...args) { callbacks.forEach(fn => fn(...args)); } };
 }
 const source = fs.readFileSync(path.join(__dirname, "../packages/kwin-script/contents/code/main.js"), "utf8");
-function setup({ existing = [], custom = [], asyncDBus = false, arm = true } = {}) {
+function setup({ existing = [], custom = [], asyncDBus = false, arm = true, mappings = null } = {}) {
     let now = 0;
-    let rules = [{ applicationId: "org.example.Editor", applicationName: "Editor", wmClass: "Editor",
+    let rules = mappings || [{ applicationId: "org.example.Editor", applicationName: "Editor", wmClass: "Editor",
         layoutId: "WindowLayoutsRightHalf", monitor: "DP-2", windowRequirement: "documentWindow",
         titleIncludes: "", excludedTitles: ["Getting Started"] }];
     const outputs = [{ name: "DP-1" }, { name: "DP-2" }];
@@ -74,9 +74,9 @@ function setup({ existing = [], custom = [], asyncDBus = false, arm = true } = {
         windows.splice(windows.indexOf(window), 1);
     }
     function settle() { tick(); tick(); }
-    function config(patch) {
+    function config(patch, notify = true) {
         rules = [{ ...rules[0], ...patch }];
-        context.options.configChanged.emit();
+        if (notify) context.options.configChanged.emit();
     }
     if (arm) tick(31000);
     return { add, close, tick, settle, alive, outputs, config, requests, workspace };
@@ -185,5 +185,78 @@ for (const change of [{ monitor: "UNPLUGGED" }, { layoutId: "custom:removed" }])
     assert.equal(app.requests.length, 1);
     app.requests.shift()(); assert.equal(app.requests.length, 1);
     app.requests.shift()(); app.settle(); placed(doc); unchanged(extra);
+}
+// Opera GX reports a nonempty synthesized app ID that differs from its desktop
+// file, but its exact StartupWMClass must still match the saved rule.
+{
+    const app = setup();
+    app.config({ applicationId: "opera-gx", applicationName: "Opera GX", wmClass: "Opera GX",
+        windowRequirement: "firstEligibleWindow" });
+    const browser = window(1000, "GX Corner - Opera", { desktopFileName: "Opera GX", resourceClass: "Opera GX" });
+    app.add(browser); app.settle(); placed(browser);
+}
+// A Steam sign-in window must not consume the rule before its resizable main window.
+{
+    const app = setup();
+    app.config({ applicationId: "com.valvesoftware.Steam", applicationName: "Steam", wmClass: "Steam",
+        windowRequirement: "firstEligibleWindow" });
+    const login = window(1001, "Sign in to Steam", { desktopFileName: "", resourceClass: "steam", resizeable: false });
+    app.add(login); app.settle(); unchanged(login); app.close(login);
+    const main = window(1001, "Steam", { desktopFileName: "", resourceClass: "steam" });
+    app.add(main); app.settle(); placed(main);
+}
+// Exact desktop IDs take precedence; ambiguous class aliases do not move a window.
+{
+    const base = { applicationName: "Editor", wmClass: "SharedEditor", monitor: "DP-2",
+        windowRequirement: "firstEligibleWindow", titleIncludes: "", excludedTitles: [] };
+    const app = setup({ mappings: [
+        { ...base, applicationId: "one", layoutId: "WindowLayoutsLeftHalf" },
+        { ...base, applicationId: "two", layoutId: "WindowLayoutsRightHalf" },
+    ] });
+    const exact = window(1002, "Editor", { desktopFileName: "two", resourceClass: "SharedEditor" });
+    app.add(exact); app.settle(); placed(exact);
+    const ambiguous = window(1003, "Editor", { desktopFileName: "unknown", resourceClass: "SharedEditor" });
+    app.add(ambiguous); app.settle(); unchanged(ambiguous);
+}
+// Flatpak gedit has no StartupWMClass and exposes only its short application ID.
+{
+    const base = { applicationName: "gedit", wmClass: "", monitor: "DP-2",
+        layoutId: "WindowLayoutsRightHalf", windowRequirement: "firstEligibleWindow",
+        titleIncludes: "", excludedTitles: [] };
+    const rule = { ...base, applicationId: "org.gnome.gedit" };
+    const app = setup({ mappings: [rule] });
+    const editor = window(1010, "Untitled Document 1", { desktopFileName: "gedit", resourceClass: "gedit" });
+    app.add(editor); app.settle(); placed(editor);
+    const ambiguous = setup({ mappings: [rule, { ...base, applicationId: "org.other.gedit" }] });
+    const shared = window(1011, "Untitled", { desktopFileName: "gedit", resourceClass: "gedit" });
+    ambiguous.add(shared); ambiguous.settle(); unchanged(shared);
+    const exact = setup({ mappings: [rule, { ...base, applicationId: "gedit", layoutId: "WindowLayoutsLeftHalf" }] });
+    const preferred = window(1012, "Untitled", { desktopFileName: "gedit", resourceClass: "gedit" });
+    exact.add(preferred); exact.settle();
+    assert.equal(preferred.frameGeometry.x, 1920);
+    const explicit = setup({ mappings: [{ ...rule, wmClass: "OtherEditor" }] });
+    const mismatch = window(1013, "Untitled", { desktopFileName: "gedit", resourceClass: "gedit" });
+    explicit.add(mismatch); explicit.settle(); unchanged(mismatch);
+}
+// Activation may precede windowAdded; a subsequently announced identity still
+// belongs to this new launch rather than the existing-window baseline.
+{
+    const app = setup();
+    const late = window(1004, "doc.txt", { desktopFileName: "", resourceClass: "", desktopFileNameChanged: signal() });
+    app.workspace.windowActivated.emit(late);
+    app.add(late);
+    late.desktopFileName = "org.example.Editor";
+    late.desktopFileNameChanged.emit();
+    app.settle(); placed(late);
+}
+// Saving script-only settings need not emit KWin's generic options signal.
+// The next added window picks up the rule without baselining itself away.
+{
+    const app = setup({ mappings: [] });
+    app.config({ applicationId: "org.example.Editor", applicationName: "Editor", wmClass: "Editor",
+        layoutId: "WindowLayoutsRightHalf", monitor: "DP-2", windowRequirement: "firstEligibleWindow",
+        titleIncludes: "", excludedTitles: [] }, false);
+    const fresh = window(1005, "Editor");
+    app.add(fresh); app.settle(); placed(fresh);
 }
 process.stdout.write("KWin application launch mapping tests passed\n");

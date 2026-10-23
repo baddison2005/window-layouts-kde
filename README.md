@@ -50,9 +50,13 @@ bars or rely on X11 window-management tools.
 - Built-in GitHub release checking and user-confirmed, checksum-verified updates
   from either configuration interface.
 
-Version **1.4.0** adds application launch mappings with a target layout,
-monitor, and window readiness options. Portable custom-layout archives remain
-compatible with the macOS edition.
+Version **1.4.1** fixes application launch mappings for apps with different
+window and desktop IDs, including Opera GX and Flatpak gedit. Newly saved
+mappings take effect on the next fresh launch, and the mapping editor flags
+unavailable monitor connectors. Use **First eligible window** for browsers,
+Steam, and Discord; Steam's sign-in window is skipped until its main window
+is ready. Portable custom-layout archives remain compatible with the macOS
+edition.
 
 ## Application launch mappings
 
@@ -66,6 +70,8 @@ Save new custom layouts with **Apply** before assigning them to an application.
 - **First eligible window** waits for a stable, movable, resizable application
   window. Splash screens, transient/modal dialogs, file choosers, recognized
   launcher titles, minimized windows, and full-screen windows are skipped.
+  Use this mode for browsers, Steam, and Discord. Steam's non-resizable sign-in
+  window is skipped while its main window becomes eligible.
 - **Document window** additionally waits for document evidence in the window
   role/title (including named files and untitled documents), or a transition
   from a launcher to an editor. It waits up to five minutes while a user
@@ -76,6 +82,7 @@ Save new custom layouts with **Apply** before assigning them to an application.
   universal document-ready attribute, so use these controls if an application's
   launch screen looks like a normal editor or its document is not recognized.
 - Monitor connectors are matched by name, independent of monitor order.
+  The editor flags unavailable connectors so you can choose a connected monitor.
   Unplugged monitors and removed custom layouts are skipped. Custom mappings
   refer to stable layout IDs, so renaming or reordering a layout is safe.
 - Existing windows are never repositioned when settings are saved or the
@@ -86,8 +93,11 @@ Save new custom layouts with **Apply** before assigning them to an application.
   a background process running must fully quit before a mapping rearms.
 
 Mappings use the application's desktop ID, with its startup WM_CLASS as a
-fallback when KWin has no desktop ID. You can also enter an ID or WM_CLASS
-manually. Applications whose launchers and editors advertise different IDs
+fallback when KWin's desktop ID has no exact mapping. Ambiguous class matches
+are skipped. If no startup class is supplied, a short window ID matching the
+last component of a reverse-DNS desktop ID (such as `org.gnome.gedit`) is also
+accepted when both window identities agree and the match is unambiguous.
+You can also enter an ID or WM_CLASS manually. Applications whose launchers and editors advertise different IDs
 should be mapped using the editor's identity. Mappings are local settings and
 are not included in portable custom-layout exports.
 

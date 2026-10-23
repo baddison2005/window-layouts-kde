@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 PROJECT = Path(__file__).resolve().parents[1]
+CURRENT_VERSION = (PROJECT / "VERSION").read_text().strip()
 STUB = '''#!/usr/bin/python3
 import json, os, sys
 from pathlib import Path
@@ -57,7 +58,7 @@ def scenario(previous_version, skip, fail=False):
                      and "org.example.WindowLayouts.Configurator.Quit" in call]
         direct_quits = [call for call in calls if call[0] == "qdbus-qt6"
                         and "org.example.WindowLayouts.Configurator.Quit" in call]
-        if skip and previous_version != "1.4.0" and not fail:
+        if skip and previous_version != CURRENT_VERSION and not fail:
             assert len(refreshes) == 1 and "--on-active=8s" in refreshes[0]
             assert calls[-1] == refreshes[0], "Refresh was scheduled before installation finished"
         else:
@@ -72,6 +73,7 @@ def scenario(previous_version, skip, fail=False):
 
 scenario("1.3.1", skip=True)
 scenario("1.4.0", skip=True)
+scenario(CURRENT_VERSION, skip=True)
 scenario("1.3.1", skip=False)
 scenario("1.3.1", skip=True, fail=True)
 print("Upgrade preserves mappings, installs the helper, and refreshes the service only after success")

@@ -125,7 +125,8 @@ def create_mapping_dialog(parent, load, save, load_layouts):
         "Place the first ready window after a fresh application launch. Existing windows "
         "and later windows from the same running app stay where they are. Mappings arm "
         "30 seconds after Window Layouts starts and wait up to 5 minutes for a ready window.\n"
-        "Use Document window for apps with launchers or template choosers. For unusual "
+        "Use First eligible window for browsers, Steam, and Discord. Use Document window "
+        "for document editors with launchers or template choosers. For unusual "
         "or localized launch screens, add excluded titles or require a title fragment. "
         "These mappings are saved separately when you select Save here."
     ))
@@ -154,10 +155,18 @@ def create_mapping_dialog(parent, load, save, load_layouts):
 
     def refresh():
         names = dict(layout_choices())
+        monitors = set(connected_monitors())
+        unavailable = sorted({item["monitor"] for item in rows if item["monitor"] not in monitors})
+        status.set_text(
+            "Unavailable monitor(s): " + ", ".join(unavailable)
+            + ". These mappings will be skipped. Edit them to select a connected monitor."
+            if unavailable else ""
+        )
         model.clear()
         for item in rows:
             model.append((item["applicationName"] or item["applicationId"],
-                          names.get(item["layoutId"], "Unavailable custom layout"), item["monitor"],
+                          names.get(item["layoutId"], "Unavailable custom layout"),
+                          item["monitor"] + (" (unavailable)" if item["monitor"] not in monitors else ""),
                           "Document window" if item["windowRequirement"] == "documentWindow"
                           else "First eligible window"))
 
@@ -202,7 +211,7 @@ def create_mapping_dialog(parent, load, save, load_layouts):
             monitor.set_active(0)
         requirement = Gtk.ComboBoxText()
         requirement.append("firstEligibleWindow", "First eligible window")
-        requirement.append("documentWindow", "Document window (wait past launchers / choosers)")
+        requirement.append("documentWindow", "Document window (document editors / template choosers)")
         requirement.set_active_id(item.get("windowRequirement", "firstEligibleWindow"))
         title = Gtk.Entry(text=item.get("titleIncludes", ""))
         title.set_placeholder_text("Optional: text that must occur in the actual window title")

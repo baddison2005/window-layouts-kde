@@ -120,11 +120,11 @@ x:w.frameGeometry.x, y:w.frameGeometry.y, width:w.frameGeometry.width, height:w.
             load_script(observer, "launch-acceptance-observer")
             wait_for(lambda: snapshots)
             output = snapshots[-1]["outputs"][1]
-            rule = {"applicationId": "org.example.LaunchAcceptance", "applicationName": "Launch Acceptance",
-                    "wmClass": "", "layoutId": "WindowLayoutsRightHalf", "monitor": output["name"],
+            # Model Opera GX's installed desktop ID differing from the window's
+            # nonempty app ID; matching must use the saved StartupWMClass.
+            rule = {"applicationId": "launch-acceptance-desktop-entry", "applicationName": "Launch Acceptance",
+                    "wmClass": "org.example.LaunchAcceptance", "layoutId": "WindowLayoutsRightHalf", "monitor": output["name"],
                     "windowRequirement": "documentWindow", "titleIncludes": "", "excludedTitles": []}
-            command("kwriteconfig6", "--file", "kwinrc", "--group", "Script-windowlayouts",
-                    "--key", "ApplicationMappings", json.dumps([rule]))
             env = dict(os.environ)
             env["PYTHONPATH"] = os.pathsep.join((str(PROJECT / "helpers"),
                                                 str(PROJECT / "cairo-dock-applet/window-layouts")))
@@ -138,6 +138,11 @@ x:w.frameGeometry.x, y:w.frameGeometry.y, width:w.frameGeometry.width, height:w.
                 "org.freedesktop.DBus.NameHasOwner", "org.example.WindowLayouts.Configurator") == "true")
             assert service.poll() is None, (root / "service.log").read_text()
             load_script(PROJECT / "packages/kwin-script/contents/code/main.js", "windowlayouts")
+            # Save after the action script is already running, as the real
+            # mapping editor does; test refresh as well as initial config load.
+            command("kwriteconfig6", "--file", "kwinrc", "--group", "Script-windowlayouts",
+                    "--key", "ApplicationMappings", json.dumps([rule]))
+            command("qdbus-qt6", "org.kde.KWin", "/KWin", "org.kde.KWin.reconfigure")
             # Exercise the actual editor and its installed-application discovery.
             command("qdbus-qt6", "org.example.WindowLayouts.Configurator",
                     "/org/example/WindowLayouts/Configurator",

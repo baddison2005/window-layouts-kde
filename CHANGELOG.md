@@ -3,6 +3,24 @@
 All notable changes to Window Layouts are documented here. This project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.4.1] - 2026-10-23
+
+### Fixed
+
+- Flatpak gedit mappings recognize its short window ID when its desktop entry
+  has no StartupWMClass; conflicting aliases are still skipped.
+
+- Newly saved mappings are refreshed when an application window appears, even
+  when KDE does not emit its general options-change signal for script settings.
+- Application launch mappings now use an unambiguous StartupWMClass fallback
+  when the window exposes a different nonempty desktop ID, as Opera GX does.
+  Exact desktop-ID mappings retain priority.
+- Newly added windows retain fresh-launch status when activation precedes
+  window creation and their application identity arrives later.
+- The mapping editor identifies unavailable monitor destinations and clarifies
+  that browsers, Steam, and Discord should use First eligible window mode.
+  Runtime diagnostics now explain missing destinations and readiness timeouts.
+
 ## [1.4.0] - 2026-10-19
 
 ### Added

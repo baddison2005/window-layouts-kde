@@ -95,6 +95,20 @@ window closure. Windows open when settings are saved, plus additions during a
 30-second script-start grace period, seed a consumed launch without moving.
 No process command lines or document contents are inspected.
 
+Exact desktop IDs take precedence over class aliases. If no exact mapping
+exists, an unambiguous StartupWMClass match is accepted even when KWin supplies
+a different nonempty desktop ID (for example, Opera GX). Entries without a
+StartupWMClass also accept the final component of a reverse-DNS desktop ID
+when both the window desktop ID and class equal that component (Flatpak gedit).
+These aliases share the same ambiguity check; explicit class aliases are not
+overridden by an inferred short ID. The editor labels
+disconnected monitor connectors explicitly. Browser/chat/game-store apps use
+First eligible window; Document window is for document editors.
+The window-added handler also re-reads mapping settings because KWin's generic
+options-change signal need not fire for script-only updates. When new rules
+are discovered there, existing windows seed the baseline but the newly added
+window remains eligible for its fresh launch.
+
 A single lazy 250 ms QTimer polls pending launches for at most five minutes.
 Candidates must be normal, movable, resizable, non-transient, non-modal,
 paint-ready, non-minimized, non-full-screen windows with stable geometry/title
@@ -480,7 +494,7 @@ After the release commit and tag exist, build the two assets required by the
 in-app updater from that exact tag:
 
 ```bash
-scripts/build-release-artifacts.sh v1.4.0 /tmp/window-layouts-v1.4.0
+scripts/build-release-artifacts.sh v1.4.1 /tmp/window-layouts-v1.4.1
 ```
 
 Upload both the `.tar.gz` and `.tar.gz.sha256` files to the GitHub Release. The

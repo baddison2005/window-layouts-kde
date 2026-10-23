@@ -66,6 +66,10 @@ def test():
         assert row["excludedTitles"] == ["Welcome", "Templates"]
         second = create_mapping_dialog(None, lambda: saved[0], lambda rows: saved.append(rows), lambda: [])
         tree = next(widget for widget in children(second) if isinstance(widget, Gtk.TreeView))
+        # The isolated test compositor has virtual outputs, not DP-1.
+        assert "unavailable" in tree.get_model()[0][2]
+        assert any(isinstance(widget, Gtk.Label) and "Unavailable monitor(s): DP-1" in widget.get_text()
+                   for widget in children(second))
         tree.get_selection().select_path(Gtk.TreePath.new_from_indices([0]))
         button(second, "Remove").emit("clicked")
         assert len(tree.get_model()) == 0
